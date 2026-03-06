@@ -1,0 +1,74 @@
+{
+  "projectType": "infrastructure",
+  "projectName": "AWS VPC Terraform Module",
+  "projectDescription": "A Terraform module for provisioning production-ready VPCs in AWS with configurable subnets, NAT gateways, and VPC endpoints.",
+  "theme": "aspen",
+  "primaryColor": "#FF9900",
+  "lightColor": "#232F3E",
+  "darkColor": "#FF9900",
+  "navigation": {
+    "groups": [
+      {
+        "group": "Getting Started",
+        "pages": [
+          "introduction",
+          "quickstart"
+        ]
+      },
+      {
+        "group": "Configuration",
+        "pages": [
+          "configuration/variables",
+          "configuration/subnet-types",
+          "configuration/nat-gateways",
+          "configuration/vpc-endpoints",
+          "configuration/tagging"
+        ]
+      },
+      {
+        "group": "Architecture",
+        "pages": [
+          "architecture/overview",
+          "architecture/networking",
+          "architecture/best-practices"
+        ]
+      },
+      {
+        "group": "Reference",
+        "pages": [
+          "reference/inputs",
+          "reference/outputs",
+          "reference/resources"
+        ]
+      },
+      {
+        "group": "Examples",
+        "pages": [
+          "examples/basic-vpc",
+          "examples/multi-az-vpc",
+          "examples/vpc-with-databases"
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Multi-AZ VPC with public, private, database, and ElastiCache subnets",
+    "Configurable NAT Gateway deployment (per-AZ or single shared)",
+    "VPC endpoints for S3 and DynamoDB",
+    "Customizable CIDR blocks and availability zones",
+    "Comprehensive tagging support for all resources"
+  ],
+  "publicApiSurface": [
+    "aws_vpc.mod",
+    "aws_subnet.public",
+    "aws_subnet.private",
+    "aws_subnet.database",
+    "aws_subnet.elasticache",
+    "aws_nat_gateway.natgw",
+    "aws_internet_gateway.mod",
+    "aws_vpc_endpoint.s3",
+    "aws_vpc_endpoint.dynamodb",
+    "aws_route_table.public",
+    "aws_route_table.private"
+  ]
+}
