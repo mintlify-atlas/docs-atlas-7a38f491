@@ -135,7 +135,7 @@ To reference these outputs in your Terraform configuration:
 
 ```hcl
 module "vpc" {
-  source = "terraform-aws-modules/vpc/aws"
+  source = "github.com/Planview/tf_aws_vpc"
   
   name = "my-vpc"
   cidr = "10.0.0.0/16"
