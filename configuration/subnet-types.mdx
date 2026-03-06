@@ -1,0 +1,495 @@
+---
+title: 'Subnet Types'
+description: 'Configure public, private, database, and ElastiCache subnets with real examples'
+---
+
+## Overview
+
+The AWS VPC Terraform module supports four distinct subnet types, each designed for specific workload patterns:
+
+- **Public Subnets** - Internet-accessible subnets with routes to an Internet Gateway
+- **Private Subnets** - Isolated subnets that can optionally access the internet via NAT Gateway
+- **Database Subnets** - Dedicated subnets for RDS instances with automatic subnet group creation
+- **ElastiCache Subnets** - Dedicated subnets for ElastiCache clusters with automatic subnet group creation
+
+## Public Subnets
+
+Public subnets are configured to have direct internet access through an Internet Gateway. They're ideal for load balancers, bastion hosts, and NAT gateways.
+
+### Configuration
+
+<ParamField path="public_subnets" type="list(string)">
+  A list of public subnet CIDR blocks inside the VPC.
+  
+  **Default:** `[]`
+  
+  **Defined in:** `variables.tf:16-19`
+</ParamField>
+
+<ParamField path="map_public_ip_on_launch" type="bool">
+  Controls whether instances launched in public subnets automatically receive public IP addresses.
+  
+  **Default:** `true`
+  
+  **Used in:** `main.tf:106`
+</ParamField>
+
+### How Public Subnets Work
+
+From `main.tf:100-109`, public subnets are created with these characteristics:
+
+```hcl
+resource "aws_subnet" "public" {
+  count = "${length(var.public_subnets)}"
+
+  vpc_id                  = "${aws_vpc.mod.id}"
+  cidr_block              = "${var.public_subnets[count.index]}"
+  availability_zone       = "${element(var.azs, count.index)}"
+  map_public_ip_on_launch = "${var.map_public_ip_on_launch}"
+
+  tags = "${merge(var.tags, var.public_subnet_tags, map(\"Name\", format(\"%s-subnet-public-%s\", var.name, element(var.azs, count.index))))}"
+}
+```
+
+### Public Subnet Routing
+
+Public subnets automatically get routes to the Internet Gateway (`main.tf:27-33`):
+
+```hcl
+resource "aws_route" "public_internet_gateway" {
+  count = "${length(var.public_subnets) > 0 ? 1 : 0}"
+
+  route_table_id         = "${aws_route_table.public.id}"
+  destination_cidr_block = "0.0.0.0/0"
+  gateway_id             = "${aws_internet_gateway.mod.id}"
+}
+```
+
+### Example: Basic Public Subnets
+
+```hcl
+module "vpc" {
+  source = "github.com/terraform-community-modules/tf_aws_vpc"
+
+  name = "web-vpc"
+  cidr = "10.0.0.0/16"
+  
+  azs            = ["us-east-1a", "us-east-1b"]
+  public_subnets = ["10.0.101.0/24", "10.0.102.0/24"]
+  
+  map_public_ip_on_launch = true
+  
+  tags = {
+    Tier = "Public"
+  }
+}
+```
+
+### Example: Public Subnets Without Auto-Assign IP
+
+```hcl
+module "vpc" {
+  source = "github.com/terraform-community-modules/tf_aws_vpc"
+
+  name = "secure-vpc"
+  cidr = "10.0.0.0/16"
+  
+  azs            = ["us-west-2a", "us-west-2b", "us-west-2c"]
+  public_subnets = ["10.0.1.0/24", "10.0.2.0/24", "10.0.3.0/24"]
+  
+  # Disable automatic public IP assignment for security
+  map_public_ip_on_launch = false
+  
+  public_subnet_tags = {
+    Type = "LoadBalancer"
+  }
+}
+```
+
+## Private Subnets
+
+Private subnets don't have direct routes to the internet. They can access the internet through NAT gateways when enabled.
+
+### Configuration
+
+<ParamField path="private_subnets" type="list(string)">
+  A list of private subnet CIDR blocks inside the VPC.
+  
+  **Default:** `[]`
+  
+  **Defined in:** `variables.tf:21-24`
+</ParamField>
+
+### How Private Subnets Work
+
+From `main.tf:52-60`, private subnets are created and distributed across availability zones:
+
+```hcl
+resource "aws_subnet" "private" {
+  count = "${length(var.private_subnets)}"
+
+  vpc_id            = "${aws_vpc.mod.id}"
+  cidr_block        = "${var.private_subnets[count.index]}"
+  availability_zone = "${element(var.azs, count.index)}"
+
+  tags = "${merge(var.tags, var.private_subnet_tags, map(\"Name\", format(\"%s-subnet-private-%s\", var.name, element(var.azs, count.index))))}"
+}
+```
+
+### Private Subnet Routing
+
+Each private subnet gets its own route table per AZ (`main.tf:43-50`):
+
+```hcl
+resource "aws_route_table" "private" {
+  count = "${length(var.azs)}"
+
+  vpc_id           = "${aws_vpc.mod.id}"
+  propagating_vgws = ["${var.private_propagating_vgws}"]
+
+  tags = "${merge(var.tags, map(\"Name\", format(\"%s-rt-private-%s\", var.name, element(var.azs, count.index))))}"
+}
+```
+
+### Example: Private Subnets with NAT Gateway
+
+```hcl
+module "vpc" {
+  source = "github.com/terraform-community-modules/tf_aws_vpc"
+
+  name = "app-vpc"
+  cidr = "10.0.0.0/16"
+  
+  azs             = ["eu-west-1a", "eu-west-1b", "eu-west-1c"]
+  private_subnets = ["10.0.1.0/24", "10.0.2.0/24", "10.0.3.0/24"]
+  public_subnets  = ["10.0.101.0/24", "10.0.102.0/24", "10.0.103.0/24"]
+  
+  # Enable NAT Gateway for private subnet internet access
+  enable_nat_gateway = true
+  single_nat_gateway = false
+  
+  private_subnet_tags = {
+    Tier = "Application"
+  }
+}
+```
+
+<Note>
+  Private subnets require public subnets to exist when using NAT gateways, as NAT gateways must be placed in public subnets.
+</Note>
+
+## Database Subnets
+
+Database subnets are specialized private subnets designed for RDS instances. They automatically create an RDS DB subnet group.
+
+### Configuration
+
+<ParamField path="database_subnets" type="list(string)">
+  A list of database subnet CIDR blocks.
+  
+  **Default:** `[]`
+  
+  **Defined in:** `variables.tf:26-30`
+</ParamField>
+
+<ParamField path="create_database_subnet_group" type="bool">
+  Controls if database subnet group should be created.
+  
+  **Default:** `true`
+  
+  **Defined in:** `variables.tf:32-35`
+</ParamField>
+
+### How Database Subnets Work
+
+From `main.tf:62-70`, database subnets are created:
+
+```hcl
+resource "aws_subnet" "database" {
+  count = "${length(var.database_subnets)}"
+
+  vpc_id            = "${aws_vpc.mod.id}"
+  cidr_block        = "${var.database_subnets[count.index]}"
+  availability_zone = "${element(var.azs, count.index)}"
+
+  tags = "${merge(var.tags, var.database_subnet_tags, map(\"Name\", format(\"%s-subnet-database-%s\", var.name, element(var.azs, count.index))))}"
+}
+```
+
+### Automatic DB Subnet Group Creation
+
+From `main.tf:72-80`, an RDS subnet group is automatically created:
+
+```hcl
+resource "aws_db_subnet_group" "database" {
+  count = "${length(var.database_subnets) > 0 && var.create_database_subnet_group ? 1 : 0}"
+
+  name        = "${var.name}-rds-subnet-group"
+  description = "Database subnet groups for ${var.name}"
+  subnet_ids  = ["${aws_subnet.database.*.id}"]
+
+  tags = "${merge(var.tags, map(\"Name\", format(\"%s-database-subnet-group\", var.name)))}"
+}
+```
+
+### Example: Database Subnets for RDS
+
+```hcl
+module "vpc" {
+  source = "github.com/terraform-community-modules/tf_aws_vpc"
+
+  name = "production-vpc"
+  cidr = "10.0.0.0/16"
+  
+  azs              = ["us-east-1a", "us-east-1b", "us-east-1c"]
+  private_subnets  = ["10.0.1.0/24", "10.0.2.0/24", "10.0.3.0/24"]
+  database_subnets = ["10.0.21.0/24", "10.0.22.0/24", "10.0.23.0/24"]
+  
+  create_database_subnet_group = true
+  
+  database_subnet_tags = {
+    Tier    = "Database"
+    Backup  = "Required"
+  }
+}
+```
+
+### Example: Database Subnets Without Subnet Group
+
+```hcl
+module "vpc" {
+  source = "github.com/terraform-community-modules/tf_aws_vpc"
+
+  name = "custom-vpc"
+  cidr = "10.0.0.0/16"
+  
+  azs              = ["ap-southeast-1a", "ap-southeast-1b"]
+  database_subnets = ["10.0.50.0/24", "10.0.51.0/24"]
+  
+  # Don't create subnet group (managing it separately)
+  create_database_subnet_group = false
+  
+  database_subnet_tags = {
+    ManagedBy = "Custom"
+  }
+}
+```
+
+<Warning>
+  Database subnets use the same private route tables as private subnets (`main.tf:183-188`). Ensure NAT gateway configuration if your RDS instances need internet access for updates.
+</Warning>
+
+## ElastiCache Subnets
+
+ElastiCache subnets are specialized private subnets designed for Redis or Memcached clusters. They automatically create an ElastiCache subnet group.
+
+### Configuration
+
+<ParamField path="elasticache_subnets" type="list(string)">
+  A list of ElastiCache subnet CIDR blocks.
+  
+  **Default:** `[]`
+  
+  **Defined in:** `variables.tf:37-41`
+</ParamField>
+
+### How ElastiCache Subnets Work
+
+From `main.tf:82-90`, ElastiCache subnets are created:
+
+```hcl
+resource "aws_subnet" "elasticache" {
+  count = "${length(var.elasticache_subnets)}"
+
+  vpc_id            = "${aws_vpc.mod.id}"
+  cidr_block        = "${var.elasticache_subnets[count.index]}"
+  availability_zone = "${element(var.azs, count.index)}"
+
+  tags = "${merge(var.tags, var.elasticache_subnet_tags, map(\"Name\", format(\"%s-subnet-elasticache-%s\", var.name, element(var.azs, count.index))))}"
+}
+```
+
+### Automatic ElastiCache Subnet Group Creation
+
+From `main.tf:92-98`, an ElastiCache subnet group is automatically created:
+
+```hcl
+resource "aws_elasticache_subnet_group" "elasticache" {
+  count = "${length(var.elasticache_subnets) > 0 ? 1 : 0}"
+
+  name        = "${var.name}-elasticache-subnet-group"
+  description = "Elasticache subnet groups for ${var.name}"
+  subnet_ids  = ["${aws_subnet.elasticache.*.id}"]
+}
+```
+
+### Example: ElastiCache Subnets for Redis
+
+```hcl
+module "vpc" {
+  source = "github.com/terraform-community-modules/tf_aws_vpc"
+
+  name = "cache-vpc"
+  cidr = "10.0.0.0/16"
+  
+  azs                 = ["us-west-2a", "us-west-2b", "us-west-2c"]
+  private_subnets     = ["10.0.1.0/24", "10.0.2.0/24", "10.0.3.0/24"]
+  elasticache_subnets = ["10.0.31.0/24", "10.0.32.0/24", "10.0.33.0/24"]
+  
+  elasticache_subnet_tags = {
+    Tier        = "Cache"
+    ClusterType = "Redis"
+  }
+}
+```
+
+## Multi-Tier Architecture Example
+
+<Tabs>
+  <Tab title="Complete Multi-Tier">
+    ```hcl
+    module "vpc" {
+      source = "github.com/terraform-community-modules/tf_aws_vpc"
+
+      name = "multi-tier-vpc"
+      cidr = "10.0.0.0/16"
+      
+      azs = [
+        "us-east-1a",
+        "us-east-1b",
+        "us-east-1c"
+      ]
+      
+      # Public tier - Load balancers, bastion
+      public_subnets = [
+        "10.0.101.0/24",
+        "10.0.102.0/24",
+        "10.0.103.0/24"
+      ]
+      
+      # Application tier - App servers
+      private_subnets = [
+        "10.0.1.0/24",
+        "10.0.2.0/24",
+        "10.0.3.0/24"
+      ]
+      
+      # Data tier - RDS databases
+      database_subnets = [
+        "10.0.21.0/24",
+        "10.0.22.0/24",
+        "10.0.23.0/24"
+      ]
+      
+      # Cache tier - ElastiCache
+      elasticache_subnets = [
+        "10.0.31.0/24",
+        "10.0.32.0/24",
+        "10.0.33.0/24"
+      ]
+      
+      create_database_subnet_group = true
+      enable_nat_gateway           = true
+      single_nat_gateway           = false
+      
+      public_subnet_tags = {
+        Tier = "Public"
+      }
+      
+      private_subnet_tags = {
+        Tier = "Application"
+      }
+      
+      database_subnet_tags = {
+        Tier = "Database"
+      }
+      
+      elasticache_subnet_tags = {
+        Tier = "Cache"
+      }
+    }
+    ```
+  </Tab>
+  
+  <Tab title="Two-Tier (Public/Private)">
+    ```hcl
+    module "vpc" {
+      source = "github.com/terraform-community-modules/tf_aws_vpc"
+
+      name = "simple-vpc"
+      cidr = "10.0.0.0/16"
+      
+      azs = ["us-west-2a", "us-west-2b"]
+      
+      # Public tier
+      public_subnets = [
+        "10.0.1.0/24",
+        "10.0.2.0/24"
+      ]
+      
+      # Private tier
+      private_subnets = [
+        "10.0.11.0/24",
+        "10.0.12.0/24"
+      ]
+      
+      enable_nat_gateway = true
+      single_nat_gateway = true
+    }
+    ```
+  </Tab>
+  
+  <Tab title="Database Only">
+    ```hcl
+    module "vpc" {
+      source = "github.com/terraform-community-modules/tf_aws_vpc"
+
+      name = "database-vpc"
+      cidr = "10.0.0.0/16"
+      
+      azs = ["eu-central-1a", "eu-central-1b", "eu-central-1c"]
+      
+      # Database subnets only (no internet access)
+      database_subnets = [
+        "10.0.1.0/24",
+        "10.0.2.0/24",
+        "10.0.3.0/24"
+      ]
+      
+      create_database_subnet_group = true
+      
+      # No NAT gateway - fully isolated
+      enable_nat_gateway = false
+    }
+    ```
+  </Tab>
+</Tabs>
+
+## Subnet Sizing Recommendations
+
+<Note>
+  **CIDR Block Sizing:**
+  
+  - `/24` (251 usable IPs) - Good for most subnets
+  - `/23` (507 usable IPs) - Large application tiers
+  - `/25` (123 usable IPs) - Small database/cache tiers
+  - `/26` (59 usable IPs) - Minimal dedicated subnets
+  
+  Remember: AWS reserves 5 IP addresses in each subnet.
+</Note>
+
+## Best Practices
+
+1. **Consistent Sizing** - Use the same size CIDR blocks across availability zones for symmetry
+2. **Reserve Space** - Leave gaps in your CIDR allocation for future subnet types
+3. **Separate Data Tiers** - Use dedicated database and cache subnets for better security and management
+4. **Match AZ Count** - Keep subnet lists the same length as your AZ list
+
+<Warning>
+  **Common Mistakes:**
+  
+  - Overlapping CIDR blocks between subnet types
+  - Database subnets in only one AZ (no high availability)
+  - Not leaving room for future subnet expansion
+  - Using too-small CIDR blocks that run out of IPs
+</Warning>

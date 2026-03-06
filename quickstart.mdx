@@ -1,80 +1,419 @@
 ---
-title: "Quickstart"
-description: "Start building awesome documentation in minutes"
+title: Quick Start Guide
+description: Deploy your first AWS VPC in minutes using this Terraform module
 ---
 
-## Get started in three steps
+Get your production-ready VPC infrastructure up and running in just a few steps.
 
-Get your documentation site running locally and make your first customization.
-
-### Step 1: Set up your local environment
-
-<AccordionGroup>
-  <Accordion icon="copy" title="Clone your docs locally">
-    During the onboarding process, you created a GitHub repository with your docs content if you didn't already have one. You can find a link to this repository in your [dashboard](https://dashboard.mintlify.com).
-    
-    To clone the repository locally so that you can make and preview changes to your docs, follow the [Cloning a repository](https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository) guide in the GitHub docs.
-  </Accordion>
-  <Accordion icon="rectangle-terminal" title="Start the preview server">
-    1. Install the Mintlify CLI: `npm i -g mint`
-    2. Navigate to your docs directory and run: `mint dev`
-    3. Open `http://localhost:3000` to see your docs live!
-    
-    <Tip>Your preview updates automatically as you edit files.</Tip>
-  </Accordion>
-</AccordionGroup>
-
-### Step 2: Deploy your changes
-
-<AccordionGroup>
-  <Accordion icon="github" title="Install our GitHub app">
-    Install the Mintlify GitHub app from your [dashboard](https://dashboard.mintlify.com/settings/organization/github-app).
-    
-    Our GitHub app automatically deploys your changes to your docs site, so you don't need to manage deployments yourself.
-</Accordion>
-<Accordion icon="palette" title="Update your site name and colors">
-    For a first change, let's update the name and colors of your docs site.
-
-    1. Open `docs.json` in your editor.
-    2. Change the `"name"` field to your project name.
-    3. Update the `"colors"` to match your brand.
-    4. Save and see your changes instantly at `http://localhost:3000`.
-
-    <Tip>Try changing the primary color to see an immediate difference!</Tip>
-  </Accordion>
-</AccordionGroup>
-
-### Step 3: Go live
-
-<Accordion icon="rocket" title="Publish your docs">
-  1. Commit and push your changes.
-  2. Your docs will update and be live in moments!
-</Accordion>
-
-## Next steps
-
-Now that you have your docs running, explore these key features:
-
-<CardGroup cols={2}>
-
-<Card title="Write Content" icon="pen-to-square" href="/essentials/markdown">
-  Learn MDX syntax and start writing your documentation.
-</Card>
-
-<Card title="Customize style" icon="palette" href="/essentials/settings">
-  Make your docs match your brand perfectly.
-</Card>
-
-<Card title="Add code examples" icon="square-code" href="/essentials/code">
-  Include syntax-highlighted code blocks.
-</Card>
-
-<Card title="API documentation" icon="code" href="/api-reference/introduction">
-  Auto-generate API docs from OpenAPI specs.
-</Card>
-
-</CardGroup>
+## Prerequisites
 
 <Note>
-  **Need help?** See our [full documentation](https://mintlify.com/docs) or join our [community](https://mintlify.com/community).
+Before you begin, ensure you have:
+- Terraform installed (version 0.12 or later recommended)
+- AWS credentials configured
+- Basic understanding of VPC concepts
 </Note>
+
+## Basic Deployment
+
+<Steps>
+  <Step title="Create a Terraform configuration file">
+    Create a new file named `main.tf` with the following content:
+
+    ```hcl main.tf
+    module "vpc" {
+      source = "github.com/Planview/tf_aws_vpc"
+
+      name = "my-vpc"
+      cidr = "10.0.0.0/16"
+      
+      azs             = ["us-west-2a", "us-west-2b", "us-west-2c"]
+      private_subnets = ["10.0.1.0/24", "10.0.2.0/24", "10.0.3.0/24"]
+      public_subnets  = ["10.0.101.0/24", "10.0.102.0/24", "10.0.103.0/24"]
+      
+      enable_nat_gateway   = true
+      enable_dns_hostnames = true
+      enable_dns_support   = true
+      
+      tags = {
+        Terraform   = "true"
+        Environment = "production"
+      }
+    }
+    ```
+
+    This creates a basic multi-AZ VPC with:
+    - 3 public subnets (one per AZ)
+    - 3 private subnets (one per AZ)
+    - NAT Gateways for private subnet internet access
+    - DNS support enabled
+  </Step>
+
+  <Step title="Add outputs to reference VPC resources">
+    Add this to your `main.tf` to access the created resources:
+
+    ```hcl main.tf
+    output "vpc_id" {
+      description = "The ID of the VPC"
+      value       = module.vpc.vpc_id
+    }
+
+    output "private_subnets" {
+      description = "List of IDs of private subnets"
+      value       = module.vpc.private_subnets
+    }
+
+    output "public_subnets" {
+      description = "List of IDs of public subnets"
+      value       = module.vpc.public_subnets
+    }
+    ```
+  </Step>
+
+  <Step title="Initialize Terraform">
+    Run the following command to download the module:
+
+    ```bash
+    terraform init
+    ```
+  </Step>
+
+  <Step title="Review the plan">
+    See what resources will be created:
+
+    ```bash
+    terraform plan
+    ```
+
+    You should see approximately 15+ resources being created, including:
+    - 1 VPC
+    - 6 subnets (3 public, 3 private)
+    - 1 Internet Gateway
+    - 3 NAT Gateways
+    - Route tables and associations
+  </Step>
+
+  <Step title="Apply the configuration">
+    Create the infrastructure:
+
+    ```bash
+    terraform apply
+    ```
+
+    Type `yes` when prompted to confirm.
+
+    <Warning>
+    NAT Gateways cost approximately $0.045/hour ($32/month) per gateway. This basic configuration creates 3 NAT Gateways. Consider using `single_nat_gateway = true` for development environments to reduce costs.
+    </Warning>
+  </Step>
+
+  <Step title="Verify the outputs">
+    After the deployment completes, you'll see the outputs:
+
+    ```bash
+    Outputs:
+
+    vpc_id = "vpc-1234567890abcdef0"
+    private_subnets = [
+      "subnet-1234567890abcdef0",
+      "subnet-1234567890abcdef1",
+      "subnet-1234567890abcdef2",
+    ]
+    public_subnets = [
+      "subnet-1234567890abcdef3",
+      "subnet-1234567890abcdef4",
+      "subnet-1234567890abcdef5",
+    ]
+    ```
+  </Step>
+</Steps>
+
+## Alternative Configurations
+
+<Tabs>
+  <Tab title="Cost-Optimized (Single NAT)">
+    For development or staging environments, use a single shared NAT Gateway:
+
+    ```hcl main.tf
+    module "vpc" {
+      source = "github.com/Planview/tf_aws_vpc"
+
+      name = "dev-vpc"
+      cidr = "10.0.0.0/16"
+      
+      azs             = ["us-west-2a", "us-west-2b"]
+      private_subnets = ["10.0.1.0/24", "10.0.2.0/24"]
+      public_subnets  = ["10.0.101.0/24", "10.0.102.0/24"]
+      
+      enable_nat_gateway   = true
+      single_nat_gateway   = true
+      enable_dns_hostnames = true
+      
+      tags = {
+        Terraform   = "true"
+        Environment = "development"
+      }
+    }
+    ```
+
+    This reduces NAT Gateway costs by ~66% but sacrifices redundancy.
+  </Tab>
+
+  <Tab title="With Database Subnets">
+    Add database subnets for RDS or other database services:
+
+    ```hcl main.tf
+    module "vpc" {
+      source = "github.com/Planview/tf_aws_vpc"
+
+      name = "production-vpc"
+      cidr = "10.0.0.0/16"
+      
+      azs             = ["us-west-2a", "us-west-2b", "us-west-2c"]
+      private_subnets = ["10.0.1.0/24", "10.0.2.0/24", "10.0.3.0/24"]
+      public_subnets  = ["10.0.101.0/24", "10.0.102.0/24", "10.0.103.0/24"]
+      database_subnets = ["10.0.201.0/24", "10.0.202.0/24", "10.0.203.0/24"]
+      
+      create_database_subnet_group = true
+      
+      enable_nat_gateway   = true
+      enable_dns_hostnames = true
+      
+      tags = {
+        Terraform   = "true"
+        Environment = "production"
+      }
+    }
+
+    output "database_subnet_group" {
+      value = module.vpc.database_subnet_group
+    }
+    ```
+  </Tab>
+
+  <Tab title="With VPC Endpoints">
+    Add S3 and DynamoDB VPC endpoints to reduce data transfer costs:
+
+    ```hcl main.tf
+    module "vpc" {
+      source = "github.com/Planview/tf_aws_vpc"
+
+      name = "production-vpc"
+      cidr = "10.0.0.0/16"
+      
+      azs             = ["us-west-2a", "us-west-2b", "us-west-2c"]
+      private_subnets = ["10.0.1.0/24", "10.0.2.0/24", "10.0.3.0/24"]
+      public_subnets  = ["10.0.101.0/24", "10.0.102.0/24", "10.0.103.0/24"]
+      
+      enable_nat_gateway      = true
+      enable_s3_endpoint      = true
+      enable_dynamodb_endpoint = true
+      enable_dns_hostnames    = true
+      
+      tags = {
+        Terraform   = "true"
+        Environment = "production"
+      }
+    }
+    ```
+
+    VPC endpoints allow private connectivity to AWS services without traversing the internet or NAT Gateway.
+  </Tab>
+
+  <Tab title="Complete Production Setup">
+    A comprehensive configuration with all features:
+
+    ```hcl main.tf
+    module "vpc" {
+      source = "github.com/Planview/tf_aws_vpc"
+
+      name = "production-vpc"
+      cidr = "10.0.0.0/16"
+      
+      azs                 = ["us-west-2a", "us-west-2b", "us-west-2c"]
+      private_subnets     = ["10.0.1.0/24", "10.0.2.0/24", "10.0.3.0/24"]
+      public_subnets      = ["10.0.101.0/24", "10.0.102.0/24", "10.0.103.0/24"]
+      database_subnets    = ["10.0.201.0/24", "10.0.202.0/24", "10.0.203.0/24"]
+      elasticache_subnets = ["10.0.211.0/24", "10.0.212.0/24", "10.0.213.0/24"]
+      
+      create_database_subnet_group = true
+      
+      enable_nat_gateway       = true
+      enable_dns_hostnames     = true
+      enable_dns_support       = true
+      enable_s3_endpoint       = true
+      enable_dynamodb_endpoint = true
+      
+      tags = {
+        Terraform   = "true"
+        Environment = "production"
+        Project     = "MyApp"
+      }
+      
+      public_subnet_tags = {
+        Type = "Public"
+      }
+      
+      private_subnet_tags = {
+        Type = "Private"
+      }
+      
+      database_subnet_tags = {
+        Type = "Database"
+      }
+    }
+    ```
+  </Tab>
+</Tabs>
+
+## Using Module Outputs
+
+Once your VPC is deployed, you can use its outputs in other resources:
+
+<Tabs>
+  <Tab title="EC2 Instance">
+    ```hcl
+    resource "aws_instance" "app" {
+      ami           = "ami-0c55b159cbfafe1f0"
+      instance_type = "t3.micro"
+      
+      subnet_id              = module.vpc.private_subnets[0]
+      vpc_security_group_ids = [aws_security_group.app.id]
+      
+      tags = {
+        Name = "app-server"
+      }
+    }
+    ```
+  </Tab>
+
+  <Tab title="RDS Database">
+    ```hcl
+    resource "aws_db_instance" "main" {
+      identifier             = "mydb"
+      engine                 = "postgres"
+      engine_version         = "13.7"
+      instance_class         = "db.t3.micro"
+      
+      db_subnet_group_name   = module.vpc.database_subnet_group
+      vpc_security_group_ids = [aws_security_group.database.id]
+      
+      allocated_storage = 20
+      username          = "dbadmin"
+      password          = var.db_password
+      
+      skip_final_snapshot = true
+    }
+    ```
+  </Tab>
+
+  <Tab title="Application Load Balancer">
+    ```hcl
+    resource "aws_lb" "main" {
+      name               = "app-alb"
+      internal           = false
+      load_balancer_type = "application"
+      
+      subnets            = module.vpc.public_subnets
+      security_groups    = [aws_security_group.alb.id]
+      
+      tags = {
+        Name = "app-alb"
+      }
+    }
+    ```
+  </Tab>
+
+  <Tab title="Security Group">
+    ```hcl
+    resource "aws_security_group" "app" {
+      name_prefix = "app-sg"
+      vpc_id      = module.vpc.vpc_id
+      
+      ingress {
+        from_port   = 80
+        to_port     = 80
+        protocol    = "tcp"
+        cidr_blocks = ["10.0.0.0/16"]
+      }
+      
+      egress {
+        from_port   = 0
+        to_port     = 0
+        protocol    = "-1"
+        cidr_blocks = ["0.0.0.0/0"]
+      }
+    }
+    ```
+  </Tab>
+</Tabs>
+
+## Available Outputs
+
+The module provides these outputs that you can reference:
+
+| Output | Description | Example Usage |
+|--------|-------------|---------------|
+| `vpc_id` | VPC ID | Security group vpc_id |
+| `vpc_cidr_block` | VPC CIDR block | Network planning |
+| `private_subnets` | Private subnet IDs | EC2, ECS, Lambda |
+| `public_subnets` | Public subnet IDs | Load balancers, NAT |
+| `database_subnets` | Database subnet IDs | RDS instances |
+| `elasticache_subnets` | ElastiCache subnet IDs | Redis, Memcached |
+| `database_subnet_group` | DB subnet group name | RDS configuration |
+| `elasticache_subnet_group` | ElastiCache subnet group name | ElastiCache configuration |
+| `natgw_ids` | NAT Gateway IDs | Monitoring, cost tracking |
+| `nat_eips_public_ips` | NAT Gateway public IPs | Whitelisting |
+| `igw_id` | Internet Gateway ID | Route table configuration |
+| `public_route_table_ids` | Public route table IDs | Custom routes |
+| `private_route_table_ids` | Private route table IDs | Custom routes |
+| `default_security_group_id` | Default security group ID | Security group rules |
+| `vpc_endpoint_s3_id` | S3 VPC Endpoint ID | Policy configuration |
+| `vpc_endpoint_dynamodb_id` | DynamoDB VPC Endpoint ID | Policy configuration |
+
+See the [Outputs Reference](/reference/outputs) for complete details.
+
+## Cleanup
+
+To destroy the VPC and all associated resources:
+
+```bash
+terraform destroy
+```
+
+<Warning>
+This will permanently delete all resources created by the module. Ensure you have no running resources (EC2 instances, RDS databases, etc.) using the VPC before destroying it.
+</Warning>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card
+    title="Configuration Options"
+    icon="sliders"
+    href="/configuration/variables"
+  >
+    Explore all available configuration variables
+  </Card>
+  <Card
+    title="Architecture Guide"
+    icon="sitemap"
+    href="/architecture/overview"
+  >
+    Understand the VPC architecture and design
+  </Card>
+  <Card
+    title="Examples"
+    icon="code"
+    href="/examples/basic-vpc"
+  >
+    See more detailed deployment examples
+  </Card>
+  <Card
+    title="Reference"
+    icon="book"
+    href="/reference/inputs"
+  >
+    Complete input and output reference
+  </Card>
+</CardGroup>

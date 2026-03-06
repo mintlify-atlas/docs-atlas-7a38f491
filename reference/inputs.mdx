@@ -1,0 +1,175 @@
+---
+title: Input Variables
+description: Complete reference of all input variables for the AWS VPC Terraform Module
+---
+
+This page documents all input variables available for configuring the VPC module.
+
+## Core Configuration
+
+<ParamField path="name" type="string" default="">
+  Name to be used on all the resources as identifier. This value is used as a prefix for resource names.
+  
+  **Example:** `my-vpc`
+</ParamField>
+
+<ParamField path="cidr" type="string" default="" required>
+  The CIDR block for the VPC.
+  
+  **Example:** `10.0.0.0/16`
+</ParamField>
+
+<ParamField path="instance_tenancy" type="string" default="default">
+  A tenancy option for instances launched into the VPC.
+  
+  **Valid values:** `default`, `dedicated`, `host`
+</ParamField>
+
+<ParamField path="azs" type="list" default="[]">
+  A list of Availability zones in the region.
+  
+  **Example:** `["us-east-1a", "us-east-1b", "us-east-1c"]`
+</ParamField>
+
+## Subnet Configuration
+
+<ParamField path="public_subnets" type="list" default="[]">
+  A list of public subnets inside the VPC. Each subnet will be created in the corresponding availability zone from the `azs` variable.
+  
+  **Example:** `["10.0.1.0/24", "10.0.2.0/24", "10.0.3.0/24"]`
+</ParamField>
+
+<ParamField path="private_subnets" type="list" default="[]">
+  A list of private subnets inside the VPC. Each subnet will be created in the corresponding availability zone from the `azs` variable.
+  
+  **Example:** `["10.0.101.0/24", "10.0.102.0/24", "10.0.103.0/24"]`
+</ParamField>
+
+<ParamField path="database_subnets" type="list" default="[]">
+  A list of database subnets. Each subnet will be created in the corresponding availability zone from the `azs` variable.
+  
+  **Example:** `["10.0.201.0/24", "10.0.202.0/24", "10.0.203.0/24"]`
+</ParamField>
+
+<ParamField path="elasticache_subnets" type="list" default="[]">
+  A list of elasticache subnets. Each subnet will be created in the corresponding availability zone from the `azs` variable.
+  
+  **Example:** `["10.0.301.0/24", "10.0.302.0/24", "10.0.303.0/24"]`
+</ParamField>
+
+## DNS Configuration
+
+<ParamField path="enable_dns_hostnames" type="bool" default="false">
+  Should be true if you want to use private DNS within the VPC. When enabled, instances launched in the VPC receive DNS hostnames.
+</ParamField>
+
+<ParamField path="enable_dns_support" type="bool" default="false">
+  Should be true if you want to use private DNS within the VPC. When enabled, the Amazon provided DNS server is enabled.
+</ParamField>
+
+## NAT Gateway Configuration
+
+<ParamField path="enable_nat_gateway" type="bool" default="false">
+  Should be true if you want to provision NAT Gateways for each of your private networks. This enables private subnets to access the internet.
+</ParamField>
+
+<ParamField path="single_nat_gateway" type="bool" default="false">
+  Should be true if you want to provision a single shared NAT Gateway across all of your private networks. When false and `enable_nat_gateway` is true, one NAT Gateway is created per availability zone.
+  
+  **Note:** Setting this to true reduces costs but creates a single point of failure.
+</ParamField>
+
+## VPC Endpoints
+
+<ParamField path="enable_s3_endpoint" type="bool" default="false">
+  Should be true if you want to provision an S3 endpoint to the VPC. This allows resources in the VPC to access S3 without going through the internet gateway.
+</ParamField>
+
+<ParamField path="enable_dynamodb_endpoint" type="bool" default="false">
+  Should be true if you want to provision a DynamoDB endpoint to the VPC. This allows resources in the VPC to access DynamoDB without going through the internet gateway.
+</ParamField>
+
+## Subnet Groups
+
+<ParamField path="create_database_subnet_group" type="bool" default="true">
+  Controls if database subnet group should be created. When true and `database_subnets` are provided, an RDS subnet group will be created.
+</ParamField>
+
+## Network Configuration
+
+<ParamField path="map_public_ip_on_launch" type="bool" default="true">
+  Should be false if you do not want to auto-assign public IP on launch for instances in public subnets.
+</ParamField>
+
+<ParamField path="private_propagating_vgws" type="list" default="[]">
+  A list of Virtual Private Gateways (VGWs) the private route table should propagate. Used for VPN connections.
+  
+  **Example:** `["vgw-12345678"]`
+</ParamField>
+
+<ParamField path="public_propagating_vgws" type="list" default="[]">
+  A list of Virtual Private Gateways (VGWs) the public route table should propagate. Used for VPN connections.
+  
+  **Example:** `["vgw-12345678"]`
+</ParamField>
+
+## Tagging
+
+<ParamField path="tags" type="map" default="{}">
+  A map of tags to add to all resources created by the module.
+  
+  **Example:**
+  ```hcl
+  {
+    Environment = "production"
+    Project     = "my-project"
+    ManagedBy   = "terraform"
+  }
+  ```
+</ParamField>
+
+<ParamField path="public_subnet_tags" type="map" default="{}">
+  Additional tags for the public subnets. These tags are merged with the `tags` variable.
+  
+  **Example:**
+  ```hcl
+  {
+    Tier = "public"
+    "kubernetes.io/role/elb" = "1"
+  }
+  ```
+</ParamField>
+
+<ParamField path="private_subnet_tags" type="map" default="{}">
+  Additional tags for the private subnets. These tags are merged with the `tags` variable.
+  
+  **Example:**
+  ```hcl
+  {
+    Tier = "private"
+    "kubernetes.io/role/internal-elb" = "1"
+  }
+  ```
+</ParamField>
+
+<ParamField path="database_subnet_tags" type="map" default="{}">
+  Additional tags for the database subnets. These tags are merged with the `tags` variable.
+  
+  **Example:**
+  ```hcl
+  {
+    Tier = "database"
+  }
+  ```
+</ParamField>
+
+<ParamField path="elasticache_subnet_tags" type="map" default="{}">
+  Additional tags for the elasticache subnets. These tags are merged with the `tags` variable.
+  
+  **Example:**
+  ```hcl
+  {
+    Tier = "cache"
+  }
+  ```
+</ParamField>

@@ -1,0 +1,345 @@
+---
+title: Networking Deep Dive
+description: Detailed routing flows, subnet design, and traffic patterns in the VPC module
+---
+
+## Route Table Architecture
+
+The module implements a dual-route-table strategy with distinct routing behavior for public and private network tiers.
+
+### Public Route Table
+
+A single shared route table serves all public subnets across all Availability Zones.
+
+**Resource**: `aws_route_table.public` (main.tf:18-25)
+
+**Routing Configuration**:
+- **Default Route**: 0.0.0.0/0 → Internet Gateway (main.tf:27-33)
+- **Local Route**: VPC CIDR → local (automatically created by AWS)
+- **VGW Propagation**: Supports VPN route propagation via `public_propagating_vgws`
+
+**Associated Subnets**: All `aws_subnet.public` instances (main.tf:197-202)
+
+<Note>
+The public route table is created only when `length(var.public_subnets) > 0`, making it optional based on your architecture needs.
+</Note>
+
+### Private Route Tables
+
+The module creates **one route table per Availability Zone** for private subnet isolation and independent NAT Gateway routing.
+
+**Resource**: `aws_route_table.private` (main.tf:43-50)
+
+**Count**: `length(var.azs)` - One per Availability Zone
+
+**Routing Configuration**:
+- **Default Route** (when NAT enabled): 0.0.0.0/0 → NAT Gateway (main.tf:35-41)
+- **Local Route**: VPC CIDR → local
+- **VGW Propagation**: Supports VPN route propagation via `private_propagating_vgws`
+
+**Associated Subnets** (main.tf:176-195):
+- Private subnets (`aws_subnet.private`)
+- Database subnets (`aws_subnet.database`)
+- ElastiCache subnets (`aws_subnet.elasticache`)
+
+<Tip>
+Per-AZ route tables enable AZ-independent failure domains. If one NAT Gateway fails, only resources in that AZ lose internet connectivity.
+</Tip>
+
+## Traffic Flows
+
+### Public Subnet Traffic Flow
+
+**Inbound Internet Traffic**:
+```
+Internet → Internet Gateway → Public Subnet → Resource
+```
+
+**Outbound Internet Traffic**:
+```
+Resource → Public Subnet → Internet Gateway → Internet
+```
+
+**Implementation Details**:
+- Public subnets have `map_public_ip_on_launch = true` by default (main.tf:106)
+- Instances receive public IPv4 addresses automatically
+- Security groups control inbound/outbound access
+- Route table association: main.tf:197-202
+
+### Private Subnet Traffic Flow
+
+**Outbound Internet Traffic** (NAT Gateway enabled):
+```
+Resource → Private Subnet → Route Table (per-AZ) → NAT Gateway → Internet Gateway → Internet
+```
+
+**Implementation Details**:
+- Each private route table routes to its corresponding AZ's NAT Gateway (main.tf:38)
+- NAT Gateway performs source NAT using its Elastic IP
+- Return traffic flows back through the same NAT Gateway
+- No inbound connections from internet possible
+
+**Inbound Traffic**:
+- Only from within VPC (local routes)
+- Or from VPN/DirectConnect (VGW propagated routes)
+
+<Note>
+Private subnets cannot receive inbound connections from the internet, even with NAT Gateways. NAT only enables outbound connectivity for software updates, API calls, etc.
+</Note>
+
+### Database Subnet Traffic Flow
+
+Database subnets share route tables with private subnets in the same AZ (main.tf:183-188).
+
+**Outbound Traffic**:
+```
+RDS Instance → Database Subnet → Private Route Table → NAT Gateway → Internet
+```
+
+**Use Cases**:
+- OS and database engine patching
+- Custom database extensions downloads
+- Backup to S3 (can be optimized with VPC endpoint)
+
+**Inter-Tier Communication**:
+```
+Application (Private Subnet) → Database (Database Subnet)
+```
+- Uses VPC local routing
+- Controlled by security groups and NACLs
+
+<Tip>
+Use the S3 VPC endpoint (`enable_s3_endpoint = true`) to route RDS backup traffic through AWS's internal network instead of NAT Gateway, reducing costs and improving performance.
+</Tip>
+
+### ElastiCache Subnet Traffic Flow
+
+ElastiCache subnets follow the same routing pattern as database subnets (main.tf:190-195).
+
+**Cache Access Pattern**:
+```
+Application (Private Subnet) → ElastiCache (ElastiCache Subnet)
+```
+
+**Node Updates**:
+```
+ElastiCache Node → ElastiCache Subnet → Private Route Table → NAT Gateway → Internet
+```
+
+## NAT Gateway Deployment Models
+
+The module supports two NAT Gateway architectures controlled by `enable_nat_gateway` and `single_nat_gateway`.
+
+### High Availability Mode (Recommended)
+
+**Configuration**:
+```hcl
+enable_nat_gateway = true
+single_nat_gateway = false  # default
+```
+
+**Resources Created**:
+- One NAT Gateway per Availability Zone (main.tf:117-124)
+- One Elastic IP per NAT Gateway (main.tf:111-115)
+- Each private route table routes to its AZ's NAT Gateway (main.tf:38)
+
+**Routing Example** (3 AZs):
+- us-east-1a private subnets → NAT Gateway in us-east-1a
+- us-east-1b private subnets → NAT Gateway in us-east-1b
+- us-east-1c private subnets → NAT Gateway in us-east-1c
+
+**Advantages**:
+- AZ-independent failure domains
+- No cross-AZ data transfer charges for NAT traffic
+- Higher aggregate bandwidth
+
+**Cost**: $0.045/hour per NAT Gateway + data processing charges (3 AZs = $97.20/month base cost)
+
+### Single NAT Gateway Mode (Cost-Optimized)
+
+**Configuration**:
+```hcl
+enable_nat_gateway = true
+single_nat_gateway = true
+```
+
+**Resources Created**:
+- One NAT Gateway in first Availability Zone (main.tf:118, 121)
+- One Elastic IP (main.tf:112)
+- All private route tables route to the single NAT Gateway (main.tf:38)
+
+**Routing Example** (3 AZs):
+- All private subnets in all AZs → NAT Gateway in us-east-1a
+
+**Advantages**:
+- Lower cost ($32.40/month vs $97.20/month for 3 AZs)
+- Simplified architecture
+
+**Disadvantages**:
+- Single point of failure for all outbound internet traffic
+- Cross-AZ data transfer charges apply
+- Bandwidth limited to single NAT Gateway capacity
+
+<Note>
+Single NAT Gateway mode should only be used for development/testing environments. Production workloads should use high availability mode to meet uptime requirements.
+</Note>
+
+## VPC Endpoints
+
+Gateway endpoints provide private connectivity to AWS services without traversing NAT Gateways or the internet.
+
+### S3 VPC Endpoint
+
+**Resource**: `aws_vpc_endpoint.s3` (main.tf:130-135)
+
+**Route Table Associations**:
+- Private route tables: main.tf:137-142
+- Public route table: main.tf:144-149
+
+**Traffic Flow** (when enabled):
+```
+EC2 Instance → Private Subnet → VPC Endpoint → S3 (AWS Network)
+```
+
+**Benefits**:
+- No NAT Gateway data processing charges for S3 traffic
+- Lower latency through AWS backbone network
+- S3 traffic never leaves AWS network
+- Supports bucket policies restricting access to specific VPC endpoint
+
+**Configuration**:
+```hcl
+enable_s3_endpoint = true
+```
+
+### DynamoDB VPC Endpoint
+
+**Resource**: `aws_vpc_endpoint.dynamodb` (main.tf:155-160)
+
+**Route Table Associations**:
+- Private route tables: main.tf:162-167
+- Public route table: main.tf:169-174
+
+**Traffic Flow** (when enabled):
+```
+Application → Private Subnet → VPC Endpoint → DynamoDB (AWS Network)
+```
+
+**Benefits**:
+- No NAT Gateway charges for DynamoDB API calls
+- Enhanced security through VPC endpoint policies
+- Reduced NAT Gateway bandwidth utilization
+
+**Configuration**:
+```hcl
+enable_dynamodb_endpoint = true
+```
+
+<Tip>
+Enable both S3 and DynamoDB endpoints in production to reduce NAT Gateway costs. A high-traffic application can save hundreds of dollars monthly by routing AWS service traffic through VPC endpoints.
+</Tip>
+
+## Subnet CIDR Planning
+
+The module requires careful CIDR planning to avoid subnet exhaustion.
+
+### Recommended CIDR Allocation
+
+For a VPC with 3 Availability Zones:
+
+**VPC**: 10.0.0.0/16 (65,536 IPs)
+
+**Public Subnets** (256 IPs each):
+- us-east-1a: 10.0.0.0/24
+- us-east-1b: 10.0.1.0/24
+- us-east-1c: 10.0.2.0/24
+
+**Private Subnets** (4,096 IPs each):
+- us-east-1a: 10.0.16.0/20
+- us-east-1b: 10.0.32.0/20
+- us-east-1c: 10.0.48.0/20
+
+**Database Subnets** (256 IPs each):
+- us-east-1a: 10.0.64.0/24
+- us-east-1b: 10.0.65.0/24
+- us-east-1c: 10.0.66.0/24
+
+**ElastiCache Subnets** (256 IPs each):
+- us-east-1a: 10.0.67.0/24
+- us-east-1b: 10.0.68.0/24
+- us-east-1c: 10.0.69.0/24
+
+<Note>
+AWS reserves 5 IP addresses in each subnet (network, broadcast, DNS, future use, and gateway), so a /24 subnet provides 251 usable IPs, not 256.
+</Note>
+
+### Subnet Sizing Guidelines
+
+**Public Subnets**: /24 (251 usable IPs)
+- Typically host load balancers and NAT Gateways
+- Low IP address consumption
+- EKS requires at least /27 per subnet for service load balancers
+
+**Private Subnets**: /20 to /18 (4,091 to 16,379 usable IPs)
+- Largest IP consumer (application instances, containers, Lambda ENIs)
+- ECS/EKS clusters can consume hundreds of IPs per node
+- Lambda functions create ENIs in VPC
+
+**Database Subnets**: /24 to /26 (251 to 59 usable IPs)
+- RDS Multi-AZ uses 2 IPs per database
+- Aurora clusters use 1 IP per instance
+- Reserved capacity for scaling
+
+**ElastiCache Subnets**: /24 to /26 (251 to 59 usable IPs)
+- Each cache node requires 1 IP
+- Cluster mode can scale to dozens of nodes
+
+## Route Table Association Logic
+
+The module associates subnets to route tables based on subnet tier and Availability Zone.
+
+### Public Subnet Associations
+
+**Code**: main.tf:197-202
+
+```hcl
+resource "aws_route_table_association" "public" {
+  count = "${length(var.public_subnets)}"
+  subnet_id      = "${element(aws_subnet.public.*.id, count.index)}"
+  route_table_id = "${aws_route_table.public.id}"
+}
+```
+
+**Pattern**: All public subnets → single public route table
+
+### Private Subnet Associations
+
+**Code**: main.tf:176-181
+
+```hcl
+resource "aws_route_table_association" "private" {
+  count = "${length(var.private_subnets)}"
+  subnet_id      = "${element(aws_subnet.private.*.id, count.index)}"
+  route_table_id = "${element(aws_route_table.private.*.id, count.index)}"
+}
+```
+
+**Pattern**: Each private subnet → corresponding AZ's route table (by index)
+
+### Database Subnet Associations
+
+**Code**: main.tf:183-188
+
+```hcl
+resource "aws_route_table_association" "database" {
+  count = "${length(var.database_subnets)}"
+  subnet_id      = "${element(aws_subnet.database.*.id, count.index)}"
+  route_table_id = "${element(aws_route_table.private.*.id, count.index)}"
+}
+```
+
+**Pattern**: Database subnets share private route tables (by index)
+
+<Note>
+Database and ElastiCache subnets use the private route tables, not separate route tables. They inherit the same NAT Gateway routing as private subnets.
+</Note>

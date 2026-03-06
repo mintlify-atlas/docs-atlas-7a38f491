@@ -1,0 +1,564 @@
+---
+title: 'VPC Endpoints'
+description: 'Configure VPC endpoints for S3 and DynamoDB to reduce NAT gateway costs and improve security'
+---
+
+## Overview
+
+VPC endpoints enable private connectivity to AWS services without requiring an internet gateway, NAT gateway, or VPN connection. The module supports gateway endpoints for:
+
+- **S3** - Amazon Simple Storage Service
+- **DynamoDB** - Amazon DynamoDB
+
+Gateway endpoints are free and reduce NAT gateway data processing charges by routing traffic directly to AWS services through the Amazon network.
+
+## Benefits of VPC Endpoints
+
+<CardGroup cols={2}>
+  <Card title="Cost Reduction" icon="dollar-sign">
+    Eliminate NAT gateway data processing charges for S3 and DynamoDB traffic (~$0.045/GB)
+  </Card>
+  
+  <Card title="Improved Performance" icon="gauge-high">
+    Direct routing to AWS services without internet gateway latency
+  </Card>
+  
+  <Card title="Enhanced Security" icon="shield">
+    Traffic never leaves the AWS network, reducing exposure
+  </Card>
+  
+  <Card title="No Additional Cost" icon="hand-holding-dollar">
+    Gateway endpoints for S3 and DynamoDB are completely free
+  </Card>
+</CardGroup>
+
+## Configuration Variables
+
+<ParamField path="enable_s3_endpoint" type="bool">
+  Controls whether to provision an S3 VPC endpoint.
+  
+  **Default:** `false`
+  
+  **Defined in:** `variables.tf:68-71`
+</ParamField>
+
+<ParamField path="enable_dynamodb_endpoint" type="bool">
+  Controls whether to provision a DynamoDB VPC endpoint.
+  
+  **Default:** `false`
+  
+  **Defined in:** `variables.tf:73-76`
+</ParamField>
+
+## How VPC Endpoints Work
+
+### S3 Endpoint Configuration
+
+From `main.tf:126-135`, the S3 endpoint is created:
+
+```hcl
+data "aws_vpc_endpoint_service" "s3" {
+  service = "s3"
+}
+
+resource "aws_vpc_endpoint" "s3" {
+  count = "${var.enable_s3_endpoint}"
+
+  vpc_id       = "${aws_vpc.mod.id}"
+  service_name = "${data.aws_vpc_endpoint_service.s3.service_name}"
+}
+```
+
+### S3 Route Table Associations
+
+The endpoint is automatically associated with all route tables (`main.tf:137-149`):
+
+**Private Subnets:**
+```hcl
+resource "aws_vpc_endpoint_route_table_association" "private_s3" {
+  count = "${var.enable_s3_endpoint ? length(var.private_subnets) : 0}"
+
+  vpc_endpoint_id = "${aws_vpc_endpoint.s3.id}"
+  route_table_id  = "${element(aws_route_table.private.*.id, count.index)}"
+}
+```
+
+**Public Subnets:**
+```hcl
+resource "aws_vpc_endpoint_route_table_association" "public_s3" {
+  count = "${var.enable_s3_endpoint ? length(var.public_subnets) : 0}"
+
+  vpc_endpoint_id = "${aws_vpc_endpoint.s3.id}"
+  route_table_id  = "${aws_route_table.public.id}"
+}
+```
+
+### DynamoDB Endpoint Configuration
+
+From `main.tf:151-174`, DynamoDB endpoint follows the same pattern:
+
+```hcl
+data "aws_vpc_endpoint_service" "dynamodb" {
+  service = "dynamodb"
+}
+
+resource "aws_vpc_endpoint" "dynamodb" {
+  count = "${var.enable_dynamodb_endpoint}"
+
+  vpc_id       = "${aws_vpc.mod.id}"
+  service_name = "${data.aws_vpc_endpoint_service.dynamodb.service_name}"
+}
+
+# Associated with private route tables
+resource "aws_vpc_endpoint_route_table_association" "private_dynamodb" {
+  count = "${var.enable_dynamodb_endpoint ? length(var.private_subnets) : 0}"
+
+  vpc_endpoint_id = "${aws_vpc_endpoint.dynamodb.id}"
+  route_table_id  = "${element(aws_route_table.private.*.id, count.index)}"
+}
+
+# Associated with public route tables
+resource "aws_vpc_endpoint_route_table_association" "public_dynamodb" {
+  count = "${var.enable_dynamodb_endpoint ? length(var.public_subnets) : 0}"
+
+  vpc_endpoint_id = "${aws_vpc_endpoint.dynamodb.id}"
+  route_table_id  = "${aws_route_table.public.id}"
+}
+```
+
+## Usage Examples
+
+<Tabs>
+  <Tab title="S3 Only">
+    ### Enable S3 Endpoint
+    
+    Recommended for workloads that heavily use S3 for storage, backups, or data lakes.
+    
+    ```hcl
+    module "vpc" {
+      source = "github.com/terraform-community-modules/tf_aws_vpc"
+
+      name = "s3-optimized-vpc"
+      cidr = "10.0.0.0/16"
+      
+      azs = ["us-east-1a", "us-east-1b", "us-east-1c"]
+      
+      private_subnets = [
+        "10.0.1.0/24",
+        "10.0.2.0/24",
+        "10.0.3.0/24"
+      ]
+      
+      public_subnets = [
+        "10.0.101.0/24",
+        "10.0.102.0/24",
+        "10.0.103.0/24"
+      ]
+      
+      # Enable S3 endpoint
+      enable_s3_endpoint = true
+      
+      # Still need NAT for other internet traffic
+      enable_nat_gateway = true
+      single_nat_gateway = false
+      
+      tags = {
+        UseCase = "Data Processing"
+      }
+    }
+    ```
+    
+    **Result:**
+    - S3 traffic routes through VPC endpoint (free)
+    - Other internet traffic routes through NAT gateway
+    - Significant cost savings for S3-heavy workloads
+  </Tab>
+  
+  <Tab title="DynamoDB Only">
+    ### Enable DynamoDB Endpoint
+    
+    Recommended for applications using DynamoDB as primary database.
+    
+    ```hcl
+    module "vpc" {
+      source = "github.com/terraform-community-modules/tf_aws_vpc"
+
+      name = "dynamodb-vpc"
+      cidr = "10.0.0.0/16"
+      
+      azs = ["us-west-2a", "us-west-2b"]
+      
+      private_subnets = ["10.0.1.0/24", "10.0.2.0/24"]
+      public_subnets  = ["10.0.101.0/24", "10.0.102.0/24"]
+      
+      # Enable DynamoDB endpoint
+      enable_dynamodb_endpoint = true
+      
+      enable_nat_gateway = true
+      single_nat_gateway = true
+      
+      tags = {
+        Database = "DynamoDB"
+      }
+    }
+    ```
+  </Tab>
+  
+  <Tab title="Both Endpoints">
+    ### Enable Both S3 and DynamoDB Endpoints
+    
+    Recommended for most production workloads to maximize cost savings.
+    
+    ```hcl
+    module "vpc" {
+      source = "github.com/terraform-community-modules/tf_aws_vpc"
+
+      name = "production-vpc"
+      cidr = "10.0.0.0/16"
+      
+      azs = [
+        "us-east-1a",
+        "us-east-1b",
+        "us-east-1c"
+      ]
+      
+      private_subnets = [
+        "10.0.1.0/24",
+        "10.0.2.0/24",
+        "10.0.3.0/24"
+      ]
+      
+      public_subnets = [
+        "10.0.101.0/24",
+        "10.0.102.0/24",
+        "10.0.103.0/24"
+      ]
+      
+      # Enable both VPC endpoints
+      enable_s3_endpoint       = true
+      enable_dynamodb_endpoint = true
+      
+      # High availability NAT for other traffic
+      enable_nat_gateway = true
+      single_nat_gateway = false
+      
+      tags = {
+        Environment = "production"
+        CostOptimized = "true"
+      }
+    }
+    ```
+    
+    **Result:**
+    - S3 traffic: VPC endpoint (free)
+    - DynamoDB traffic: VPC endpoint (free)
+    - Other internet traffic: NAT gateway (charged)
+    - Maximum cost optimization
+  </Tab>
+  
+  <Tab title="Fully Isolated">
+    ### VPC Endpoints Without NAT Gateway
+    
+    For workloads that only need S3/DynamoDB access without general internet access.
+    
+    ```hcl
+    module "vpc" {
+      source = "github.com/terraform-community-modules/tf_aws_vpc"
+
+      name = "isolated-vpc"
+      cidr = "10.0.0.0/16"
+      
+      azs = ["eu-west-1a", "eu-west-1b", "eu-west-1c"]
+      
+      private_subnets = [
+        "10.0.1.0/24",
+        "10.0.2.0/24",
+        "10.0.3.0/24"
+      ]
+      
+      # VPC endpoints for AWS services only
+      enable_s3_endpoint       = true
+      enable_dynamodb_endpoint = true
+      
+      # No NAT gateway - no internet access
+      enable_nat_gateway = false
+      
+      tags = {
+        SecurityLevel = "high"
+        Isolated      = "true"
+      }
+    }
+    ```
+    
+    **Result:**
+    - Access to S3 and DynamoDB only
+    - No internet access
+    - No NAT gateway costs
+    - Maximum security and cost savings
+  </Tab>
+</Tabs>
+
+## Cost Impact Analysis
+
+### Without VPC Endpoints
+
+```
+Monthly S3 Data Transfer: 10 TB
+NAT Gateway Processing: 10,000 GB × $0.045/GB = $450/month
+NAT Gateway Hourly: $32.40/month
+Total: $482.40/month
+```
+
+### With S3 VPC Endpoint
+
+```
+Monthly S3 Data Transfer: 10 TB
+VPC Endpoint: $0/month (free)
+NAT Gateway Processing: $0 (S3 traffic bypasses NAT)
+NAT Gateway Hourly: $32.40/month (still needed for other traffic)
+Total: $32.40/month
+
+Savings: $450/month
+```
+
+<Note>
+  **Typical Savings:**
+  
+  - Small workloads (100 GB/month): ~$4.50/month saved
+  - Medium workloads (1 TB/month): ~$45/month saved
+  - Large workloads (10 TB/month): ~$450/month saved
+  
+  VPC endpoints pay for themselves immediately since they're free.
+</Note>
+
+## Architecture Patterns
+
+### Data Processing Pipeline
+
+```hcl
+module "vpc" {
+  source = "github.com/terraform-community-modules/tf_aws_vpc"
+
+  name = "data-pipeline-vpc"
+  cidr = "10.0.0.0/16"
+  
+  azs = ["us-east-1a", "us-east-1b", "us-east-1c"]
+  
+  # Application tier
+  private_subnets = [
+    "10.0.1.0/24",
+    "10.0.2.0/24",
+    "10.0.3.0/24"
+  ]
+  
+  public_subnets = [
+    "10.0.101.0/24",
+    "10.0.102.0/24",
+    "10.0.103.0/24"
+  ]
+  
+  # S3 for data lake
+  enable_s3_endpoint = true
+  
+  # DynamoDB for metadata
+  enable_dynamodb_endpoint = true
+  
+  # NAT for API calls to external services
+  enable_nat_gateway = true
+  single_nat_gateway = false
+  
+  tags = {
+    Workload = "DataProcessing"
+  }
+}
+```
+
+### Serverless Application
+
+```hcl
+module "vpc" {
+  source = "github.com/terraform-community-modules/tf_aws_vpc"
+
+  name = "serverless-vpc"
+  cidr = "10.0.0.0/16"
+  
+  azs = ["us-west-2a", "us-west-2b"]
+  
+  # Lambda functions in private subnets
+  private_subnets = ["10.0.1.0/24", "10.0.2.0/24"]
+  
+  # Enable endpoints for AWS service access
+  enable_s3_endpoint       = true
+  enable_dynamodb_endpoint = true
+  
+  # NAT for external API calls
+  enable_nat_gateway = true
+  single_nat_gateway = true  # Cost-optimized for serverless
+  
+  tags = {
+    Architecture = "Serverless"
+  }
+}
+```
+
+### High-Security Database Tier
+
+```hcl
+module "vpc" {
+  source = "github.com/terraform-community-modules/tf_aws_vpc"
+
+  name = "database-vpc"
+  cidr = "10.0.0.0/16"
+  
+  azs = ["ap-southeast-1a", "ap-southeast-1b", "ap-southeast-1c"]
+  
+  # Database subnets only
+  database_subnets = [
+    "10.0.21.0/24",
+    "10.0.22.0/24",
+    "10.0.23.0/24"
+  ]
+  
+  create_database_subnet_group = true
+  
+  # S3 endpoint for RDS backups
+  enable_s3_endpoint = true
+  
+  # No NAT gateway - fully isolated
+  enable_nat_gateway = false
+  
+  tags = {
+    Tier          = "Database"
+    SecurityLevel = "Maximum"
+  }
+}
+```
+
+## Supported Services
+
+<Note>
+  **Current Support:**
+  
+  This module only supports gateway endpoints for:
+  - ✓ S3 (Amazon Simple Storage Service)
+  - ✓ DynamoDB (Amazon DynamoDB)
+  
+  **Not Supported:**
+  - ✗ Interface endpoints (EC2, ECS, etc.)
+  - ✗ Gateway Load Balancer endpoints
+  
+  For other AWS services, you'll need to create interface VPC endpoints separately.
+</Note>
+
+## Route Table Associations
+
+VPC endpoints are automatically associated with:
+
+1. **All private route tables** - One per availability zone (`main.tf:43-50`)
+2. **The public route table** - Shared across all public subnets (`main.tf:18-25`)
+3. **Database subnet route tables** - Use private route tables (`main.tf:183-188`)
+4. **ElastiCache subnet route tables** - Use private route tables (`main.tf:190-195`)
+
+This means **all subnets** in your VPC automatically get access to enabled VPC endpoints.
+
+## Best Practices
+
+<Check>
+  **Recommendations:**
+  
+  - ✓ Always enable S3 endpoint for production VPCs (free cost savings)
+  - ✓ Enable DynamoDB endpoint if using DynamoDB (free cost savings)
+  - ✓ Enable endpoints even with NAT gateways for cost optimization
+  - ✓ Use VPC endpoints for isolated workloads (no internet access needed)
+  - ✓ Monitor VPC endpoint metrics in CloudWatch
+</Check>
+
+<Warning>
+  **Common Mistakes:**
+  
+  - Not enabling VPC endpoints and paying unnecessary NAT gateway charges
+  - Assuming VPC endpoints provide internet access (they don't)
+  - Forgetting to update S3 bucket policies for VPC endpoint access
+  - Not testing endpoint connectivity after enabling
+</Warning>
+
+## Troubleshooting
+
+### S3 Access Still Goes Through NAT Gateway
+
+**Check:**
+1. `enable_s3_endpoint = true` is set
+2. Endpoint is associated with correct route tables
+3. S3 bucket policy allows VPC endpoint access
+4. No explicit routes forcing traffic through NAT
+
+**Verify:**
+```bash
+# Check route table has VPC endpoint route
+aws ec2 describe-route-tables --route-table-ids rtb-xxxxx
+```
+
+### Access Denied Errors After Enabling Endpoint
+
+**Solution:**
+Update S3 bucket policy to allow VPC endpoint:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": "*",
+      "Action": "s3:*",
+      "Resource": [
+        "arn:aws:s3:::my-bucket",
+        "arn:aws:s3:::my-bucket/*"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:sourceVpce": "vpce-xxxxx"
+        }
+      }
+    }
+  ]
+}
+```
+
+### DynamoDB Queries Failing
+
+**Check:**
+1. `enable_dynamodb_endpoint = true` is set
+2. Security groups allow outbound HTTPS (port 443)
+3. Network ACLs allow HTTPS traffic
+4. IAM roles have DynamoDB permissions
+
+## Outputs
+
+The module provides outputs for endpoint IDs (from README.md):
+
+- `vpc_endpoint_s3_id` - VPC Endpoint ID for S3
+- `vpc_endpoint_dynamodb_id` - VPC Endpoint ID for DynamoDB
+
+**Usage:**
+```hcl
+output "s3_endpoint" {
+  value = module.vpc.vpc_endpoint_s3_id
+}
+
+output "dynamodb_endpoint" {
+  value = module.vpc.vpc_endpoint_dynamodb_id
+}
+```
+
+## Related Configuration
+
+<CardGroup cols={2}>
+  <Card title="NAT Gateways" icon="router" href="/configuration/nat-gateways">
+    Combine with VPC endpoints to reduce costs
+  </Card>
+  
+  <Card title="Subnet Types" icon="network-wired" href="/configuration/subnet-types">
+    Understand how endpoints work with different subnets
+  </Card>
+</CardGroup>

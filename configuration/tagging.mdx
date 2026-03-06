@@ -1,0 +1,556 @@
+---
+title: 'Tagging Strategy'
+description: 'Implement comprehensive tagging for VPC resources using hierarchical tag variables'
+---
+
+## Overview
+
+The AWS VPC Terraform module provides a hierarchical tagging system that allows you to apply tags at multiple levels:
+
+1. **Global tags** - Applied to all resources created by the module
+2. **Subnet-specific tags** - Additional tags for specific subnet types
+3. **Automatic name tags** - Generated automatically based on resource type and AZ
+
+This approach enables consistent tagging across your infrastructure while allowing granular control for specific resources.
+
+## Tag Variables
+
+### Global Tags
+
+<ParamField path="tags" type="map(string)">
+  A map of tags to add to all resources created by the module.
+  
+  **Default:** `{}`
+  
+  **Defined in:** `variables.tf:93-96`
+  
+  Applied to: VPC, subnets, route tables, NAT gateways, internet gateway, subnet groups
+</ParamField>
+
+### Subnet-Specific Tags
+
+<ParamField path="public_subnet_tags" type="map(string)">
+  Additional tags for public subnets only.
+  
+  **Default:** `{}`
+  
+  **Defined in:** `variables.tf:98-101`
+  
+  **Used in:** `main.tf:108`
+</ParamField>
+
+<ParamField path="private_subnet_tags" type="map(string)">
+  Additional tags for private subnets only.
+  
+  **Default:** `{}`
+  
+  **Defined in:** `variables.tf:103-106`
+  
+  **Used in:** `main.tf:59`
+</ParamField>
+
+<ParamField path="database_subnet_tags" type="map(string)">
+  Additional tags for database subnets only.
+  
+  **Default:** `{}`
+  
+  **Defined in:** `variables.tf:108-111`
+  
+  **Used in:** `main.tf:69`
+</ParamField>
+
+<ParamField path="elasticache_subnet_tags" type="map(string)">
+  Additional tags for ElastiCache subnets only.
+  
+  **Default:** `{}`
+  
+  **Defined in:** `variables.tf:113-116`
+  
+  **Used in:** `main.tf:89`
+</ParamField>
+
+## How Tag Merging Works
+
+Tags are merged hierarchically using Terraform's `merge()` function. From `main.tf:7`, here's how VPC tags are constructed:
+
+```hcl
+tags = "${merge(var.tags, map(\"Name\", format(\"%s\", var.name)))}"
+```
+
+For subnets, the pattern adds subnet-specific tags (`main.tf:59`):
+
+```hcl
+tags = "${merge(var.tags, var.private_subnet_tags, map(\"Name\", format(\"%s-subnet-private-%s\", var.name, element(var.azs, count.index))))}"
+```
+
+### Tag Merge Order
+
+1. **Base:** Global tags from `var.tags`
+2. **Layer:** Subnet-specific tags (if applicable)
+3. **Override:** Automatic `Name` tag
+
+<Note>
+  Later tags in the merge chain override earlier tags with the same key. The automatically generated `Name` tag will always override any `Name` tag you provide in `tags` or subnet-specific tag variables.
+</Note>
+
+## Automatic Name Tags
+
+The module automatically generates descriptive `Name` tags for all resources:
+
+### VPC Name
+```hcl
+Name = "{var.name}"
+Example: "production-vpc"
+```
+
+### Subnet Names
+```hcl
+# Public subnets (main.tf:108)
+Name = "{var.name}-subnet-public-{az}"
+Example: "production-vpc-subnet-public-us-east-1a"
+
+# Private subnets (main.tf:59)
+Name = "{var.name}-subnet-private-{az}"
+Example: "production-vpc-subnet-private-us-east-1a"
+
+# Database subnets (main.tf:69)
+Name = "{var.name}-subnet-database-{az}"
+Example: "production-vpc-subnet-database-us-east-1a"
+
+# ElastiCache subnets (main.tf:89)
+Name = "{var.name}-subnet-elasticache-{az}"
+Example: "production-vpc-subnet-elasticache-us-east-1a"
+```
+
+### Route Table Names
+```hcl
+# Public route table (main.tf:24)
+Name = "{var.name}-rt-public"
+Example: "production-vpc-rt-public"
+
+# Private route tables (main.tf:49)
+Name = "{var.name}-rt-private-{az}"
+Example: "production-vpc-rt-private-us-east-1a"
+```
+
+### Other Resource Names
+```hcl
+# Internet Gateway (main.tf:15)
+Name = "{var.name}-igw"
+
+# Database Subnet Group (main.tf:79)
+Name = "{var.name}-database-subnet-group"
+```
+
+## Tagging Examples
+
+<Tabs>
+  <Tab title="Basic Tagging">
+    ### Simple Global Tags
+    
+    ```hcl
+    module "vpc" {
+      source = "github.com/terraform-community-modules/tf_aws_vpc"
+
+      name = "my-vpc"
+      cidr = "10.0.0.0/16"
+      
+      azs             = ["us-east-1a", "us-east-1b"]
+      private_subnets = ["10.0.1.0/24", "10.0.2.0/24"]
+      public_subnets  = ["10.0.101.0/24", "10.0.102.0/24"]
+      
+      # Global tags applied to all resources
+      tags = {
+        Terraform   = "true"
+        Environment = "production"
+        Owner       = "platform-team"
+      }
+    }
+    ```
+    
+    **Result:**
+    All resources get these tags:
+    - `Terraform = "true"`
+    - `Environment = "production"`
+    - `Owner = "platform-team"`
+    - `Name = "my-vpc-{resource-type}-{az}"`
+  </Tab>
+  
+  <Tab title="Subnet-Specific Tags">
+    ### Tags for Different Subnet Tiers
+    
+    ```hcl
+    module "vpc" {
+      source = "github.com/terraform-community-modules/tf_aws_vpc"
+
+      name = "multi-tier-vpc"
+      cidr = "10.0.0.0/16"
+      
+      azs              = ["us-west-2a", "us-west-2b", "us-west-2c"]
+      private_subnets  = ["10.0.1.0/24", "10.0.2.0/24", "10.0.3.0/24"]
+      public_subnets   = ["10.0.101.0/24", "10.0.102.0/24", "10.0.103.0/24"]
+      database_subnets = ["10.0.21.0/24", "10.0.22.0/24", "10.0.23.0/24"]
+      
+      # Global tags
+      tags = {
+        Terraform   = "true"
+        Environment = "production"
+        CostCenter  = "engineering"
+      }
+      
+      # Public subnet tags
+      public_subnet_tags = {
+        Tier = "Public"
+        Type = "LoadBalancer"
+        Internet = "true"
+      }
+      
+      # Private subnet tags
+      private_subnet_tags = {
+        Tier = "Application"
+        Type = "Compute"
+        Internet = "via-nat"
+      }
+      
+      # Database subnet tags
+      database_subnet_tags = {
+        Tier = "Database"
+        Type = "RDS"
+        Backup = "required"
+        Internet = "false"
+      }
+    }
+    ```
+    
+    **Result:**
+    - Public subnets get: global tags + public_subnet_tags
+    - Private subnets get: global tags + private_subnet_tags
+    - Database subnets get: global tags + database_subnet_tags
+  </Tab>
+  
+  <Tab title="Kubernetes Integration">
+    ### Tags for EKS/Kubernetes
+    
+    ```hcl
+    module "vpc" {
+      source = "github.com/terraform-community-modules/tf_aws_vpc"
+
+      name = "eks-vpc"
+      cidr = "10.0.0.0/16"
+      
+      azs             = ["us-east-1a", "us-east-1b", "us-east-1c"]
+      private_subnets = ["10.0.1.0/24", "10.0.2.0/24", "10.0.3.0/24"]
+      public_subnets  = ["10.0.101.0/24", "10.0.102.0/24", "10.0.103.0/24"]
+      
+      enable_nat_gateway = true
+      single_nat_gateway = false
+      
+      # Global tags including EKS cluster tag
+      tags = {
+        "kubernetes.io/cluster/my-cluster" = "shared"
+        Environment                         = "production"
+        ManagedBy                           = "terraform"
+      }
+      
+      # Public subnet tags for ELB
+      public_subnet_tags = {
+        "kubernetes.io/role/elb" = "1"
+        Tier                     = "Public"
+      }
+      
+      # Private subnet tags for internal ELB
+      private_subnet_tags = {
+        "kubernetes.io/role/internal-elb" = "1"
+        Tier                              = "Private"
+      }
+    }
+    ```
+    
+    **Result:**
+    EKS can discover subnets using the Kubernetes-specific tags.
+  </Tab>
+  
+  <Tab title="Cost Allocation">
+    ### Tags for Cost Tracking
+    
+    ```hcl
+    module "vpc" {
+      source = "github.com/terraform-community-modules/tf_aws_vpc"
+
+      name = "app-vpc"
+      cidr = "10.0.0.0/16"
+      
+      azs             = ["eu-west-1a", "eu-west-1b"]
+      private_subnets = ["10.0.1.0/24", "10.0.2.0/24"]
+      public_subnets  = ["10.0.101.0/24", "10.0.102.0/24"]
+      
+      enable_nat_gateway = true
+      single_nat_gateway = false
+      
+      # Cost allocation tags
+      tags = {
+        CostCenter       = "CC-12345"
+        Department       = "Engineering"
+        Project          = "CustomerPortal"
+        BillingContact   = "finance@example.com"
+        Environment      = "production"
+        AutoShutdown     = "false"
+      }
+      
+      # Track NAT gateway costs by tier
+      public_subnet_tags = {
+        NATGateway = "hosted-here"
+      }
+      
+      private_subnet_tags = {
+        NATGateway = "uses-nat"
+      }
+    }
+    ```
+  </Tab>
+  
+  <Tab title="Compliance Tags">
+    ### Tags for Compliance and Security
+    
+    ```hcl
+    module "vpc" {
+      source = "github.com/terraform-community-modules/tf_aws_vpc"
+
+      name = "compliance-vpc"
+      cidr = "10.0.0.0/16"
+      
+      azs              = ["us-east-1a", "us-east-1b", "us-east-1c"]
+      private_subnets  = ["10.0.1.0/24", "10.0.2.0/24", "10.0.3.0/24"]
+      database_subnets = ["10.0.21.0/24", "10.0.22.0/24", "10.0.23.0/24"]
+      
+      create_database_subnet_group = true
+      
+      # Compliance tags
+      tags = {
+        Compliance       = "PCI-DSS"
+        DataClassification = "Confidential"
+        Encryption       = "Required"
+        BackupRequired   = "true"
+        AuditLog        = "enabled"
+        SecurityContact = "security@example.com"
+      }
+      
+      # Database subnets need additional compliance tags
+      database_subnet_tags = {
+        DataClassification = "Highly Confidential"
+        Compliance         = "PCI-DSS,SOC2"
+        EncryptionAtRest  = "Required"
+        EncryptionInTransit = "Required"
+        AccessControl     = "Restricted"
+      }
+    }
+    ```
+  </Tab>
+</Tabs>
+
+## Common Tagging Strategies
+
+### Environment-Based Tagging
+
+```hcl
+variable "environment" {
+  default = "production"
+}
+
+module "vpc" {
+  source = "github.com/terraform-community-modules/tf_aws_vpc"
+
+  name = "${var.environment}-vpc"
+  cidr = "10.0.0.0/16"
+  
+  # ... subnet configuration ...
+  
+  tags = {
+    Environment = var.environment
+    Terraform   = "true"
+    ManagedBy   = "DevOps Team"
+  }
+}
+```
+
+### Project-Based Tagging
+
+```hcl
+locals {
+  common_tags = {
+    Project     = "customer-portal"
+    Owner       = "platform-team"
+    Terraform   = "true"
+    Repository  = "github.com/myorg/infrastructure"
+  }
+}
+
+module "vpc" {
+  source = "github.com/terraform-community-modules/tf_aws_vpc"
+
+  name = "customer-portal-vpc"
+  cidr = "10.0.0.0/16"
+  
+  # ... subnet configuration ...
+  
+  tags = local.common_tags
+  
+  public_subnet_tags = merge(local.common_tags, {
+    Tier = "Public"
+  })
+}
+```
+
+### Multi-Account Tagging
+
+```hcl
+data "aws_caller_identity" "current" {}
+
+module "vpc" {
+  source = "github.com/terraform-community-modules/tf_aws_vpc"
+
+  name = "shared-services-vpc"
+  cidr = "10.0.0.0/16"
+  
+  # ... subnet configuration ...
+  
+  tags = {
+    Account     = data.aws_caller_identity.current.account_id
+    AccountType = "shared-services"
+    Owner       = "platform-team"
+    Terraform   = "true"
+  }
+}
+```
+
+## Tag Inheritance Patterns
+
+Understanding how tags flow through resources:
+
+```
+var.tags (Global)
+    |
+    ├──> VPC
+    ├──> Internet Gateway
+    ├──> NAT Gateways
+    ├──> Route Tables
+    ├──> Subnet Groups
+    |
+    └──> Subnets
+            |
+            ├──> Public Subnets
+            |       └──> merge(var.tags, var.public_subnet_tags, Name)
+            |
+            ├──> Private Subnets
+            |       └──> merge(var.tags, var.private_subnet_tags, Name)
+            |
+            ├──> Database Subnets
+            |       └──> merge(var.tags, var.database_subnet_tags, Name)
+            |
+            └──> ElastiCache Subnets
+                    └──> merge(var.tags, var.elasticache_subnet_tags, Name)
+```
+
+## Best Practices
+
+<Check>
+  **Recommended Tag Keys:**
+  
+  - ✓ `Environment` - production, staging, development
+  - ✓ `Terraform` - "true" to identify managed resources
+  - ✓ `Owner` - team or individual responsible
+  - ✓ `CostCenter` - for billing allocation
+  - ✓ `Project` - project or application name
+  - ✓ `ManagedBy` - management tool or team
+</Check>
+
+<Warning>
+  **Tagging Mistakes to Avoid:**
+  
+  - Using inconsistent tag key capitalization across resources
+  - Not using tags for cost allocation
+  - Hardcoding environment-specific values instead of variables
+  - Forgetting to tag subnet groups (they inherit from `tags`)
+  - Using spaces in tag keys (use PascalCase or kebab-case)
+</Warning>
+
+## AWS Reserved Tags
+
+<Note>
+  **AWS-Reserved Tag Prefixes:**
+  
+  Tags starting with `aws:` are reserved by AWS and cannot be set:
+  - `aws:createdBy`
+  - `aws:cloudformation:*`
+  
+  Tags for specific services:
+  - `kubernetes.io/*` - Kubernetes/EKS
+  - `elasticbeanstalk:*` - Elastic Beanstalk
+  - `ecs:*` - ECS
+</Note>
+
+## Tag Limits
+
+- Maximum tags per resource: **50**
+- Maximum tag key length: **128 characters**
+- Maximum tag value length: **256 characters**
+- Allowed characters: `a-z`, `A-Z`, `0-9`, `+`, `-`, `=`, `.`, `_`, `:`, `/`, `@`
+
+## Output Tag Information
+
+To reference tags in other modules:
+
+```hcl
+module "vpc" {
+  source = "github.com/terraform-community-modules/tf_aws_vpc"
+  
+  # ... configuration ...
+  
+  tags = {
+    Environment = "production"
+  }
+}
+
+# Reference VPC tags in another module
+resource "aws_security_group" "app" {
+  vpc_id = module.vpc.vpc_id
+  
+  tags = merge(
+    module.vpc.tags,  # Note: Module doesn't output tags
+    {
+      Name = "app-sg"
+    }
+  )
+}
+```
+
+<Note>
+  The module doesn't expose a `tags` output. If you need to reuse tags, store them in local variables and pass them to both the module and other resources.
+</Note>
+
+## Tag-Based Resource Filtering
+
+Use tags to filter resources in AWS CLI or other modules:
+
+```bash
+# List all subnets in production VPC
+aws ec2 describe-subnets \
+  --filters "Name=tag:Environment,Values=production" \
+            "Name=tag:Tier,Values=Private"
+
+# Get all NAT gateways for a project
+aws ec2 describe-nat-gateways \
+  --filter "Name=tag:Project,Values=customer-portal"
+```
+
+## Related Configuration
+
+<CardGroup cols={2}>
+  <Card title="Variables" icon="sliders" href="/configuration/variables">
+    Complete list of all configuration variables
+  </Card>
+  
+  <Card title="Subnet Types" icon="network-wired" href="/configuration/subnet-types">
+    Learn about different subnet types and their tags
+  </Card>
+</CardGroup>

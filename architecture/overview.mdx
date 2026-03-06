@@ -1,0 +1,153 @@
+---
+title: Architecture Overview
+description: High-level architecture of the AWS VPC Terraform Module and the resources it creates
+---
+
+## Introduction
+
+This module creates a production-ready Amazon Virtual Private Cloud (VPC) with multiple subnet tiers, internet connectivity, and optional AWS service endpoints. It implements a multi-tier network architecture designed for high availability across multiple Availability Zones.
+
+## Core Resources Created
+
+The module provisions the following AWS resources:
+
+### VPC Foundation
+
+- **aws_vpc.mod** - The primary VPC with configurable CIDR block, DNS settings, and instance tenancy
+- **aws_internet_gateway.mod** - Internet Gateway for public subnet internet access (created when public subnets are defined)
+
+### Subnet Tiers
+
+The module creates four distinct subnet types, each serving specific workload requirements:
+
+- **aws_subnet.public** - Public subnets for internet-facing resources (ALBs, bastion hosts)
+- **aws_subnet.private** - Private subnets for application workloads (EC2, ECS, Lambda)
+- **aws_subnet.database** - Isolated subnets for RDS database instances
+- **aws_subnet.elasticache** - Isolated subnets for ElastiCache clusters
+
+<Note>
+All subnet types are distributed across the Availability Zones specified in the `azs` variable to ensure high availability.
+</Note>
+
+### NAT Gateway Infrastructure
+
+For private subnet internet access:
+
+- **aws_eip.nateip** - Elastic IP addresses for NAT Gateways
+- **aws_nat_gateway.natgw** - NAT Gateways for outbound internet connectivity from private subnets
+
+<Tip>
+The module supports two NAT Gateway deployment modes:
+- **High Availability Mode** (default): One NAT Gateway per Availability Zone
+- **Cost-Optimized Mode** (`single_nat_gateway = true`): Single shared NAT Gateway
+</Tip>
+
+### Routing Tables
+
+- **aws_route_table.public** - Single route table for all public subnets with default route to Internet Gateway
+- **aws_route_table.private** - Per-AZ route tables for private, database, and elasticache subnets
+- **aws_route.public_internet_gateway** - Default route (0.0.0.0/0) pointing to Internet Gateway
+- **aws_route.private_nat_gateway** - Default routes pointing to NAT Gateways
+- **aws_route_table_association.*** - Associations linking subnets to route tables
+
+### VPC Endpoints (Optional)
+
+Gateway endpoints for private AWS service access without internet traversal:
+
+- **aws_vpc_endpoint.s3** - S3 gateway endpoint
+- **aws_vpc_endpoint.dynamodb** - DynamoDB gateway endpoint
+- **aws_vpc_endpoint_route_table_association.*** - Route table associations for endpoints
+
+### Subnet Groups
+
+Managed subnet groups for AWS services:
+
+- **aws_db_subnet_group.database** - RDS subnet group for database deployment
+- **aws_elasticache_subnet_group.elasticache** - ElastiCache subnet group
+
+## Architecture Patterns
+
+### Multi-Tier Network Design
+
+The module implements a defense-in-depth network architecture:
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                         VPC                             │
+│  ┌───────────────────────────────────────────────────┐  │
+│  │  Public Subnets (aws_subnet.public)               │  │
+│  │  • Internet Gateway attached                      │  │
+│  │  • Public IP auto-assignment                      │  │
+│  │  • Load balancers, bastion hosts                  │  │
+│  └───────────────────────────────────────────────────┘  │
+│                          │                              │
+│                    NAT Gateways                         │
+│                          │                              │
+│  ┌───────────────────────────────────────────────────┐  │
+│  │  Private Subnets (aws_subnet.private)             │  │
+│  │  • NAT Gateway for outbound internet              │  │
+│  │  • Application servers, containers                │  │
+│  └───────────────────────────────────────────────────┘  │
+│                                                          │
+│  ┌───────────────────────────────────────────────────┐  │
+│  │  Database Subnets (aws_subnet.database)           │  │
+│  │  • RDS instances                                   │  │
+│  │  • NAT Gateway for patching/updates               │  │
+│  └───────────────────────────────────────────────────┘  │
+│                                                          │
+│  ┌───────────────────────────────────────────────────┐  │
+│  │  ElastiCache Subnets (aws_subnet.elasticache)     │  │
+│  │  • Redis/Memcached clusters                       │  │
+│  │  • NAT Gateway for node updates                   │  │
+│  └───────────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────┘
+```
+
+### High Availability Design
+
+Resources are distributed across Availability Zones:
+
+- Each subnet type spans multiple AZs (defined by `azs` variable)
+- Private route tables are created per-AZ (main.tf:43-50)
+- NAT Gateways are deployed per-AZ for fault tolerance (unless `single_nat_gateway` is enabled)
+
+## Resource Dependencies
+
+Key dependency relationships:
+
+1. **Internet Gateway** → VPC (main.tf:13)
+2. **NAT Gateway** → Internet Gateway (main.tf:123) - Explicit dependency ensures IGW exists before NAT provisioning
+3. **Route Tables** → VPC (main.tf:21, 46)
+4. **Subnets** → VPC (main.tf:55, 65, 86, 103)
+5. **Routes** → Route Tables + Gateways (main.tf:30, 38)
+6. **Subnet Associations** → Subnets + Route Tables (main.tf:176-202)
+
+<Note>
+The NAT Gateway has an explicit `depends_on` relationship with the Internet Gateway to ensure proper provisioning order during infrastructure creation.
+</Note>
+
+## DNS Configuration
+
+The VPC supports two DNS settings:
+
+- **enable_dns_hostnames** - Enables DNS hostname assignment to instances (main.tf:4)
+- **enable_dns_support** - Enables DNS resolution within the VPC (main.tf:5)
+
+<Tip>
+Enable both DNS settings for production workloads to support service discovery and private hosted zones.
+</Tip>
+
+## Resource Naming Convention
+
+All resources follow a consistent naming pattern using the `name` variable:
+
+- VPC: `{name}`
+- Internet Gateway: `{name}-igw`
+- Public Route Table: `{name}-rt-public`
+- Private Route Tables: `{name}-rt-private-{az}`
+- Public Subnets: `{name}-subnet-public-{az}`
+- Private Subnets: `{name}-subnet-private-{az}`
+- Database Subnets: `{name}-subnet-database-{az}`
+- ElastiCache Subnets: `{name}-subnet-elasticache-{az}`
+
+This naming convention ensures resource identification and organizational compliance.

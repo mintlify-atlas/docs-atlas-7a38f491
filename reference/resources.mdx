@@ -1,0 +1,311 @@
+---
+title: AWS Resources
+description: Complete list of all AWS resources created by the VPC Terraform Module
+---
+
+This page documents all AWS resources that can be created by the VPC module, including the conditions under which each resource is created.
+
+## Core VPC Resources
+
+### aws_vpc.mod
+
+**Always created**
+
+Creates the main VPC with the specified CIDR block, instance tenancy, and DNS settings.
+
+**Configuration:**
+- CIDR block: `var.cidr`
+- Instance tenancy: `var.instance_tenancy`
+- DNS hostnames: `var.enable_dns_hostnames`
+- DNS support: `var.enable_dns_support`
+- Tags: Merged from `var.tags` with Name tag
+
+## Internet Gateway
+
+### aws_internet_gateway.mod
+
+**Created when:** `length(var.public_subnets) > 0`
+
+Creates an Internet Gateway to allow public subnets to access the internet.
+
+**Configuration:**
+- Attached to: Main VPC
+- Tags: Merged from `var.tags` with Name tag formatted as `{name}-igw`
+
+## Route Tables
+
+### aws_route_table.public
+
+**Created when:** `length(var.public_subnets) > 0`
+
+Creates a public route table for public subnets. One route table is shared across all public subnets.
+
+**Configuration:**
+- Propagating VGWs: `var.public_propagating_vgws`
+- Tags: Merged from `var.tags` with Name tag formatted as `{name}-rt-public`
+
+### aws_route_table.private
+
+**Created when:** `length(var.azs) > 0`
+
+Creates private route tables for private subnets. One route table per availability zone.
+
+**Configuration:**
+- Count: One per availability zone
+- Propagating VGWs: `var.private_propagating_vgws`
+- Tags: Merged from `var.tags` with Name tag formatted as `{name}-rt-private-{az}`
+
+## Routes
+
+### aws_route.public_internet_gateway
+
+**Created when:** `length(var.public_subnets) > 0`
+
+Creates a route in the public route table to the Internet Gateway for outbound internet access.
+
+**Configuration:**
+- Destination CIDR: `0.0.0.0/0`
+- Gateway: Internet Gateway
+
+### aws_route.private_nat_gateway
+
+**Created when:** `var.enable_nat_gateway == true`
+
+Creates routes in private route tables to NAT Gateways for outbound internet access from private subnets.
+
+**Configuration:**
+- Count: One per availability zone (or one if `single_nat_gateway` is true)
+- Destination CIDR: `0.0.0.0/0`
+- Gateway: NAT Gateway
+
+## Subnets
+
+### aws_subnet.public
+
+**Created when:** `length(var.public_subnets) > 0`
+
+Creates public subnets that are accessible from the internet via the Internet Gateway.
+
+**Configuration:**
+- Count: `length(var.public_subnets)`
+- CIDR blocks: `var.public_subnets`
+- Availability zones: `var.azs`
+- Auto-assign public IP: `var.map_public_ip_on_launch`
+- Tags: Merged from `var.tags` and `var.public_subnet_tags` with Name tag
+
+### aws_subnet.private
+
+**Created when:** `length(var.private_subnets) > 0`
+
+Creates private subnets with no direct internet access (optionally routed through NAT Gateway).
+
+**Configuration:**
+- Count: `length(var.private_subnets)`
+- CIDR blocks: `var.private_subnets`
+- Availability zones: `var.azs`
+- Tags: Merged from `var.tags` and `var.private_subnet_tags` with Name tag
+
+### aws_subnet.database
+
+**Created when:** `length(var.database_subnets) > 0`
+
+Creates dedicated subnets for database resources (RDS, Aurora, etc.).
+
+**Configuration:**
+- Count: `length(var.database_subnets)`
+- CIDR blocks: `var.database_subnets`
+- Availability zones: `var.azs`
+- Tags: Merged from `var.tags` and `var.database_subnet_tags` with Name tag
+
+### aws_subnet.elasticache
+
+**Created when:** `length(var.elasticache_subnets) > 0`
+
+Creates dedicated subnets for ElastiCache resources (Redis, Memcached).
+
+**Configuration:**
+- Count: `length(var.elasticache_subnets)`
+- CIDR blocks: `var.elasticache_subnets`
+- Availability zones: `var.azs`
+- Tags: Merged from `var.tags` and `var.elasticache_subnet_tags` with Name tag
+
+## Subnet Groups
+
+### aws_db_subnet_group.database
+
+**Created when:** `length(var.database_subnets) > 0 && var.create_database_subnet_group == true`
+
+Creates an RDS subnet group that can be used when launching RDS instances.
+
+**Configuration:**
+- Name: `{name}-rds-subnet-group`
+- Subnet IDs: All database subnets
+- Tags: Merged from `var.tags` with Name tag
+
+### aws_elasticache_subnet_group.elasticache
+
+**Created when:** `length(var.elasticache_subnets) > 0`
+
+Creates an ElastiCache subnet group that can be used when launching ElastiCache clusters.
+
+**Configuration:**
+- Name: `{name}-elasticache-subnet-group`
+- Subnet IDs: All elasticache subnets
+
+## NAT Gateway Resources
+
+### aws_eip.nateip
+
+**Created when:** `var.enable_nat_gateway == true`
+
+Allocates Elastic IPs for NAT Gateways.
+
+**Configuration:**
+- Count: 
+  - If `single_nat_gateway` is true: 1
+  - If `single_nat_gateway` is false: `length(var.azs)`
+- VPC: true
+
+### aws_nat_gateway.natgw
+
+**Created when:** `var.enable_nat_gateway == true`
+
+Creates NAT Gateways to allow private subnets to access the internet.
+
+**Configuration:**
+- Count:
+  - If `single_nat_gateway` is true: 1
+  - If `single_nat_gateway` is false: `length(var.azs)`
+- Allocation ID: Elastic IP
+- Subnet: Public subnet
+- Dependency: Internet Gateway must exist first
+
+## VPC Endpoints
+
+### aws_vpc_endpoint.s3
+
+**Created when:** `var.enable_s3_endpoint == true`
+
+Creates a VPC endpoint for S3, allowing private access to S3 without traversing the internet.
+
+**Configuration:**
+- Service: S3
+- Type: Gateway endpoint
+
+### aws_vpc_endpoint.dynamodb
+
+**Created when:** `var.enable_dynamodb_endpoint == true`
+
+Creates a VPC endpoint for DynamoDB, allowing private access to DynamoDB without traversing the internet.
+
+**Configuration:**
+- Service: DynamoDB
+- Type: Gateway endpoint
+
+## VPC Endpoint Route Table Associations
+
+### aws_vpc_endpoint_route_table_association.private_s3
+
+**Created when:** `var.enable_s3_endpoint == true && length(var.private_subnets) > 0`
+
+Associates the S3 VPC endpoint with private route tables.
+
+**Configuration:**
+- Count: `length(var.private_subnets)`
+
+### aws_vpc_endpoint_route_table_association.public_s3
+
+**Created when:** `var.enable_s3_endpoint == true && length(var.public_subnets) > 0`
+
+Associates the S3 VPC endpoint with public route tables.
+
+**Configuration:**
+- Count: `length(var.public_subnets)`
+
+### aws_vpc_endpoint_route_table_association.private_dynamodb
+
+**Created when:** `var.enable_dynamodb_endpoint == true && length(var.private_subnets) > 0`
+
+Associates the DynamoDB VPC endpoint with private route tables.
+
+**Configuration:**
+- Count: `length(var.private_subnets)`
+
+### aws_vpc_endpoint_route_table_association.public_dynamodb
+
+**Created when:** `var.enable_dynamodb_endpoint == true && length(var.public_subnets) > 0`
+
+Associates the DynamoDB VPC endpoint with public route tables.
+
+**Configuration:**
+- Count: `length(var.public_subnets)`
+
+## Route Table Associations
+
+### aws_route_table_association.public
+
+**Created when:** `length(var.public_subnets) > 0`
+
+Associates public subnets with the public route table.
+
+**Configuration:**
+- Count: `length(var.public_subnets)`
+
+### aws_route_table_association.private
+
+**Created when:** `length(var.private_subnets) > 0`
+
+Associates private subnets with their corresponding private route tables.
+
+**Configuration:**
+- Count: `length(var.private_subnets)`
+
+### aws_route_table_association.database
+
+**Created when:** `length(var.database_subnets) > 0`
+
+Associates database subnets with private route tables.
+
+**Configuration:**
+- Count: `length(var.database_subnets)`
+
+### aws_route_table_association.elasticache
+
+**Created when:** `length(var.elasticache_subnets) > 0`
+
+Associates elasticache subnets with private route tables.
+
+**Configuration:**
+- Count: `length(var.elasticache_subnets)`
+
+## Data Sources
+
+### data.aws_vpc_endpoint_service.s3
+
+**Always queried**
+
+Looks up the VPC endpoint service for S3 in the current region.
+
+### data.aws_vpc_endpoint_service.dynamodb
+
+**Always queried**
+
+Looks up the VPC endpoint service for DynamoDB in the current region.
+
+## Resource Summary
+
+| Resource Type | Count | Condition |
+|--------------|-------|----------|
+| VPC | 1 | Always |
+| Internet Gateway | 0-1 | If public subnets defined |
+| Public Route Table | 0-1 | If public subnets defined |
+| Private Route Tables | 0-N | One per AZ |
+| Public Subnets | 0-N | Based on `var.public_subnets` |
+| Private Subnets | 0-N | Based on `var.private_subnets` |
+| Database Subnets | 0-N | Based on `var.database_subnets` |
+| ElastiCache Subnets | 0-N | Based on `var.elasticache_subnets` |
+| NAT Gateways | 0-N | If enabled, 1 or N based on `single_nat_gateway` |
+| Elastic IPs | 0-N | Same as NAT Gateways |
+| VPC Endpoints | 0-2 | Based on S3/DynamoDB endpoint settings |
+| DB Subnet Group | 0-1 | If database subnets + group creation enabled |
+| ElastiCache Subnet Group | 0-1 | If elasticache subnets defined |

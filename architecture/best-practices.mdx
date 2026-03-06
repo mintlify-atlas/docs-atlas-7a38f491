@@ -1,0 +1,467 @@
+---
+title: Best Practices
+description: Production-ready VPC design, security hardening, and cost optimization strategies
+---
+
+## High Availability Best Practices
+
+### Multi-AZ Deployment
+
+Always deploy across at least 3 Availability Zones for production workloads.
+
+**Configuration**:
+```hcl
+module "vpc" {
+  source = "github.com/terraform-community-modules/tf_aws_vpc"
+  
+  name = "production-vpc"
+  cidr = "10.0.0.0/16"
+  
+  azs = ["us-east-1a", "us-east-1b", "us-east-1c"]
+  
+  private_subnets  = ["10.0.16.0/20", "10.0.32.0/20", "10.0.48.0/20"]
+  public_subnets   = ["10.0.0.0/24", "10.0.1.0/24", "10.0.2.0/24"]
+  database_subnets = ["10.0.64.0/24", "10.0.65.0/24", "10.0.66.0/24"]
+}
+```
+
+**Why 3 AZs**:
+- Survives simultaneous failure of any single AZ
+- Meets most compliance requirements (SOC2, HIPAA)
+- Required for Amazon RDS Multi-AZ with read replicas
+- Supports Kubernetes/EKS quorum-based systems
+
+<Tip>
+Ensure the count of subnet CIDRs matches the count of Availability Zones. The module uses `count.index` to pair subnets with AZs (main.tf:57, 67, 87, 105).
+</Tip>
+
+### NAT Gateway Redundancy
+
+Use one NAT Gateway per Availability Zone for production.
+
+**Configuration**:
+```hcl
+enable_nat_gateway = true
+single_nat_gateway = false  # critical for HA
+```
+
+**Failure Scenario Without HA**:
+- Single NAT Gateway fails → All private subnet outbound traffic fails
+- Application can't download updates, access external APIs, or send notifications
+- Impact duration: 3-5 minutes for AWS to detect and replace NAT Gateway
+
+**Cost vs Reliability**:
+- Single NAT: $32.40/month (1 gateway)
+- HA NAT (3 AZs): $97.20/month (3 gateways)
+- Additional cost: $64.80/month for 99.99% availability SLA
+
+<Note>
+NAT Gateway is covered by AWS's 99.99% availability SLA only when deployed across multiple Availability Zones. Single NAT Gateway deployments have no SLA.
+</Note>
+
+## Security Best Practices
+
+### Network Segmentation
+
+Implement strict network tier isolation using the module's four subnet types.
+
+**Public Subnets** (`aws_subnet.public`):
+- **Purpose**: Internet-facing load balancers only
+- **Never deploy**: Application servers, databases, or compute instances
+- **Security groups**: Restrict to ports 80/443 from 0.0.0.0/0
+- **Resources**: ALB, NLB, NAT Gateways
+
+**Private Subnets** (`aws_subnet.private`):
+- **Purpose**: Application tier (EC2, ECS, EKS, Lambda)
+- **Security groups**: Allow inbound only from load balancer security groups
+- **Outbound**: Internet via NAT Gateway for external API calls
+- **No public IPs**: Instances unreachable from internet
+
+**Database Subnets** (`aws_subnet.database`):
+- **Purpose**: RDS, Aurora, Redshift
+- **Security groups**: Allow inbound only from application tier security groups
+- **Port restrictions**: Only database ports (3306, 5432, etc.)
+- **Multi-AZ**: RDS automatically creates standby in different AZ
+
+**ElastiCache Subnets** (`aws_subnet.elasticache`):
+- **Purpose**: Redis, Memcached clusters
+- **Security groups**: Allow inbound only from application tier
+- **Port restrictions**: 6379 (Redis), 11211 (Memcached)
+
+<Tip>
+Use the `database_subnet_tags` and `elasticache_subnet_tags` variables to add compliance tags required by security scanning tools:
+
+```hcl
+database_subnet_tags = {
+  "Tier" = "database"
+  "Compliance" = "PCI-DSS"
+  "DataClassification" = "restricted"
+}
+```
+</Tip>
+
+### DNS Configuration
+
+Enable both DNS settings for production VPCs.
+
+**Required Configuration**:
+```hcl
+enable_dns_hostnames = true
+enable_dns_support   = true
+```
+
+**Why Both Are Required**:
+- **enable_dns_support**: Enables VPC DNS resolver at 169.254.169.253 (main.tf:5)
+- **enable_dns_hostnames**: Assigns DNS names to instances with public IPs (main.tf:4)
+
+**Use Cases Requiring DNS**:
+- Route 53 private hosted zones
+- Service discovery (ECS, EKS)
+- RDS endpoint resolution
+- VPC endpoint DNS names
+- AWS Systems Manager Session Manager
+
+<Note>
+Without `enable_dns_hostnames = true`, instances receive public IPs but no public DNS names, breaking many AWS service integrations.
+</Note>
+
+### VPC Endpoint Security
+
+Use VPC endpoints to avoid internet routing for AWS service traffic.
+
+**S3 Endpoint** (enable for all production VPCs):
+```hcl
+enable_s3_endpoint = true
+```
+
+**Security Benefits**:
+- S3 traffic never traverses internet or NAT Gateway (main.tf:130-149)
+- Supports S3 bucket policies restricting access to specific VPC endpoint
+- Prevents data exfiltration through unauthorized S3 buckets
+- Audit all S3 access via VPC Flow Logs
+
+**Example S3 Bucket Policy**:
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Deny",
+      "Principal": "*",
+      "Action": "s3:*",
+      "Resource": [
+        "arn:aws:s3:::production-bucket/*",
+        "arn:aws:s3:::production-bucket"
+      ],
+      "Condition": {
+        "StringNotEquals": {
+          "aws:sourceVpce": "vpce-12345678"
+        }
+      }
+    }
+  ]
+}
+```
+
+**DynamoDB Endpoint**:
+```hcl
+enable_dynamodb_endpoint = true
+```
+
+**When to Enable**:
+- Application makes high-volume DynamoDB API calls
+- Compliance requires AWS traffic to stay on AWS network
+- Reducing NAT Gateway data processing costs
+
+<Tip>
+VPC Gateway Endpoints (S3, DynamoDB) are free. There are no hourly charges or data processing fees. Always enable them for production VPCs.
+</Tip>
+
+## Cost Optimization
+
+### NAT Gateway Cost Management
+
+NAT Gateways are typically the highest VPC cost component.
+
+**Pricing** (us-east-1):
+- Hourly: $0.045/hour ($32.40/month per gateway)
+- Data processing: $0.045/GB
+
+**3-AZ Production VPC Monthly Costs**:
+- NAT Gateways: 3 × $32.40 = $97.20
+- Data processing (500 GB): 500 × $0.045 = $22.50
+- **Total**: $119.70/month
+
+### Optimization Strategy 1: VPC Endpoints
+
+**Problem**: Application transfers 2 TB/month to S3 through NAT Gateway
+
+**Cost Without VPC Endpoint**:
+- NAT processing: 2,048 GB × $0.045 = $92.16/month
+
+**Cost With VPC Endpoint** (main.tf:130-135):
+- S3 endpoint: $0 (no charge)
+- **Savings**: $92.16/month
+
+**Implementation**:
+```hcl
+enable_s3_endpoint = true
+```
+
+### Optimization Strategy 2: PrivateLink vs NAT Gateway
+
+For high-traffic AWS services, compare VPC PrivateLink interface endpoints to NAT Gateway routing.
+
+**NAT Gateway Route** (current module default):
+- Services: EC2 API, ECS API, Secrets Manager, etc.
+- Cost: $0.045/GB data processing + $0.01/GB interface endpoint data (if applicable)
+
+**PrivateLink Interface Endpoint**:
+- Cost: $0.01/hour per AZ ($7.20/month per endpoint per AZ) + $0.01/GB
+- Break-even: ~450 GB/month per endpoint
+
+**Recommendation**:
+- High-traffic APIs (>500 GB/month): Use interface endpoints
+- Low-traffic APIs: Use NAT Gateway (module default)
+- S3 and DynamoDB: Always use gateway endpoints (free)
+
+<Note>
+This module creates S3 and DynamoDB gateway endpoints but does not create interface endpoints. For PrivateLink interface endpoints (EC2, ECS, Secrets Manager, etc.), create those separately after the VPC is provisioned.
+</Note>
+
+### Optimization Strategy 3: Single NAT for Non-Production
+
+**Development/Staging Configuration**:
+```hcl
+enable_nat_gateway = true
+single_nat_gateway = true  # acceptable for non-prod
+```
+
+**Cost Savings**:
+- Production (3 NAT): $97.20/month
+- Non-Production (1 NAT): $32.40/month
+- **Savings**: $64.80/month per environment
+
+**Trade-offs**:
+- No AZ redundancy (acceptable for dev/test)
+- Cross-AZ data transfer charges apply
+- All outbound traffic flows through single gateway
+
+### Optimization Strategy 4: Right-Size Subnet CIDRs
+
+Avoid over-provisioning IP addresses.
+
+**Anti-Pattern** (waste of IP space):
+```hcl
+private_subnets = ["10.0.0.0/16", "10.1.0.0/16", "10.2.0.0/16"]  # 65k IPs each
+```
+
+**Best Practice** (main.tf:52-60):
+```hcl
+private_subnets = ["10.0.16.0/20", "10.0.32.0/20", "10.0.48.0/20"]  # 4k IPs each
+```
+
+**Why It Matters**:
+- AWS charges per ENI, not per IP
+- Smaller subnets enable better VPC peering and security group planning
+- Leaves room for future subnet types (ML, analytics, etc.)
+
+## Monitoring and Observability
+
+### VPC Flow Logs
+
+Enable VPC Flow Logs for security and troubleshooting.
+
+**Configuration** (create separately after VPC):
+```hcl
+resource "aws_flow_log" "vpc" {
+  vpc_id          = module.vpc.vpc_id
+  traffic_type    = "ALL"
+  iam_role_arn    = aws_iam_role.flow_logs.arn
+  log_destination = aws_cloudwatch_log_group.flow_logs.arn
+}
+```
+
+**Use Cases**:
+- Detect security group misconfigurations (rejected traffic)
+- Troubleshoot connectivity issues (route table problems)
+- Audit compliance (who accessed what)
+- Identify top talkers for cost optimization
+
+### CloudWatch Metrics
+
+Monitor critical VPC metrics.
+
+**NAT Gateway Metrics**:
+- `BytesOutToDestination` - Outbound traffic volume
+- `BytesInFromDestination` - Response traffic volume
+- `PacketsDropCount` - Dropped packets (potential capacity issue)
+- `ErrorPortAllocation` - Port exhaustion warning
+
+**Alarms to Create**:
+```hcl
+resource "aws_cloudwatch_metric_alarm" "nat_error_port_allocation" {
+  alarm_name          = "nat-gateway-port-exhaustion"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = "2"
+  metric_name         = "ErrorPortAllocation"
+  namespace           = "AWS/NATGateway"
+  period              = "60"
+  statistic           = "Sum"
+  threshold           = "0"
+  alarm_description   = "NAT Gateway port exhaustion detected"
+  
+  dimensions = {
+    NatGatewayId = module.vpc.natgw_ids[0]
+  }
+}
+```
+
+<Tip>
+NAT Gateway port exhaustion occurs when too many concurrent connections originate from the same source IP. If you hit this limit, deploy additional NAT Gateways or redesign application to use connection pooling.
+</Tip>
+
+## Disaster Recovery
+
+### VPC Design for Multi-Region DR
+
+**Primary Region VPC**:
+```hcl
+module "vpc_primary" {
+  source = "github.com/terraform-community-modules/tf_aws_vpc"
+  
+  name = "production-us-east-1"
+  cidr = "10.0.0.0/16"
+  azs  = ["us-east-1a", "us-east-1b", "us-east-1c"]
+  # ... subnets
+}
+```
+
+**DR Region VPC**:
+```hcl
+module "vpc_dr" {
+  source = "github.com/terraform-community-modules/tf_aws_vpc"
+  
+  name = "production-us-west-2"
+  cidr = "10.1.0.0/16"  # non-overlapping CIDR
+  azs  = ["us-west-2a", "us-west-2b", "us-west-2c"]
+  # ... identical subnet structure
+}
+```
+
+**Critical Requirements**:
+- Non-overlapping CIDR blocks (enables VPC peering or Transit Gateway)
+- Identical subnet structure (simplifies infrastructure-as-code)
+- Same security group port ranges (enables reusable Terraform modules)
+
+### Backup VPC State
+
+Store Terraform state remotely with versioning.
+
+**Configuration**:
+```hcl
+terraform {
+  backend "s3" {
+    bucket         = "terraform-state-production"
+    key            = "vpc/terraform.tfstate"
+    region         = "us-east-1"
+    encrypt        = true
+    dynamodb_table = "terraform-locks"
+    versioning     = true
+  }
+}
+```
+
+**Why It Matters**:
+- VPC deletion is catastrophic (all resources must be recreated)
+- State file corruption can prevent VPC modifications
+- Versioning enables rollback after accidental changes
+
+## Compliance Considerations
+
+### Tagging Strategy
+
+Implement comprehensive tagging using the module's tag variables.
+
+**Configuration**:
+```hcl
+module "vpc" {
+  source = "github.com/terraform-community-modules/tf_aws_vpc"
+  
+  name = "production-vpc"
+  cidr = "10.0.0.0/16"
+  
+  tags = {
+    Environment       = "production"
+    CostCenter        = "engineering"
+    Compliance        = "PCI-DSS"
+    ManagedBy         = "terraform"
+    DataClassification = "internal"
+  }
+  
+  public_subnet_tags = {
+    Tier = "public"
+    "kubernetes.io/role/elb" = "1"  # for EKS load balancers
+  }
+  
+  private_subnet_tags = {
+    Tier = "private"
+    "kubernetes.io/role/internal-elb" = "1"
+  }
+  
+  database_subnet_tags = {
+    Tier = "database"
+    DataClassification = "restricted"
+  }
+}
+```
+
+**Compliance Framework Mapping**:
+- **PCI-DSS**: Tag database subnets with cardholder data classification
+- **HIPAA**: Tag subnets containing PHI
+- **SOC2**: Tag with data classification and responsible team
+- **GDPR**: Tag subnets containing EU personal data
+
+<Note>
+All tagging variables (main.tf:7, 15, 24, 49, 59, 69, 89, 108) merge tags, so resource-specific tags are combined with global tags. This enables both organizational and compliance tagging.
+</Note>
+
+### Network ACLs
+
+The module uses VPC default NACLs (allowing all traffic). For compliance, create custom NACLs.
+
+**Example**: Restrict database subnet access
+```hcl
+resource "aws_network_acl" "database" {
+  vpc_id     = module.vpc.vpc_id
+  subnet_ids = module.vpc.database_subnets
+  
+  ingress {
+    protocol   = "tcp"
+    rule_no    = 100
+    action     = "allow"
+    cidr_block = "10.0.16.0/20"  # private subnet CIDR
+    from_port  = 3306
+    to_port    = 3306
+  }
+  
+  egress {
+    protocol   = "tcp"
+    rule_no    = 100
+    action     = "allow"
+    cidr_block = "0.0.0.0/0"
+    from_port  = 1024
+    to_port    = 65535  # ephemeral ports
+  }
+  
+  tags = merge(var.tags, {
+    Name = "database-nacl"
+  })
+}
+```
+
+**When to Use NACLs**:
+- PCI-DSS compliance requirements
+- Defense-in-depth alongside security groups
+- Subnet-level DDoS protection
+- Explicit deny rules for known malicious IPs

@@ -1,97 +1,108 @@
 ---
-title: "Introduction"
-description: "Welcome to the new home for your documentation"
+title: "AWS VPC Terraform Module"
+description: "A Terraform module for provisioning production-ready VPCs in AWS with configurable subnets, NAT gateways, and VPC endpoints."
 ---
 
-## Setting up
+## Overview
 
-Get your documentation site up and running in minutes.
+The AWS VPC Terraform module simplifies the creation of production-ready Virtual Private Clouds on AWS. It provides a flexible, reusable foundation for your infrastructure with support for multi-AZ deployments, multiple subnet types, and advanced networking features.
 
-<Card
-  title="Start here"
-  icon="rocket"
-  href="/quickstart"
-  horizontal
->
-  Follow our three step quickstart guide.
-</Card>
-
-## Make it yours
-
-Design a docs site that looks great and empowers your users.
-
-<Columns cols={2}>
+<CardGroup cols={2}>
   <Card
-    title="Edit locally"
-    icon="pen-to-square"
-    href="/development"
+    title="Quick Start"
+    icon="rocket"
+    href="/quickstart"
   >
-    Edit your docs locally and preview them in real time.
+    Get your VPC up and running in minutes with basic configuration
   </Card>
   <Card
-    title="Customize your site"
-    icon="palette"
-    href="/essentials/settings"
+    title="Architecture"
+    icon="sitemap"
+    href="/architecture/overview"
   >
-    Customize the design and colors of your site to match your brand.
-  </Card>
-    <Card
-    title="Set up navigation"
-    icon="map"
-    href="/essentials/navigation"
-  >
-    Organize your docs to help users find what they need and succeed with your product.
+    Understand the networking architecture and design patterns
   </Card>
   <Card
-    title="API documentation"
-    icon="terminal"
-    href="/api-reference/introduction"
+    title="Configuration Guide"
+    icon="sliders"
+    href="/configuration/variables"
   >
-    Auto-generate API documentation from OpenAPI specifications.
-  </Card>
-</Columns>
-
-## Create beautiful pages
-
-Everything you need to create world-class documentation.
-
-<Columns cols={2}>
-  <Card
-    title="Write with MDX"
-    icon="pen-fancy"
-    href="/essentials/markdown"
-  >
-    Use MDX to style your docs pages.
+    Learn how to configure subnets, NAT gateways, and VPC endpoints
   </Card>
   <Card
-    title="Code samples"
-    icon="code"
-    href="/essentials/code"
+    title="Reference"
+    icon="book"
+    href="/reference/inputs"
   >
-    Add sample code to demonstrate how to use your product.
+    Complete reference for all inputs, outputs, and resources
+  </Card>
+</CardGroup>
+
+## Key Features
+
+<CardGroup cols={2}>
+  <Card
+    title="Multi-AZ Deployment"
+    icon="server"
+  >
+    Deploy public, private, database, and ElastiCache subnets across multiple availability zones for high availability
   </Card>
   <Card
-    title="Images"
-    icon="image"
-    href="/essentials/images"
+    title="Flexible NAT Gateways"
+    icon="network-wired"
   >
-    Display images and other media.
+    Choose between per-AZ NAT gateways for redundancy or a single shared gateway for cost optimization
   </Card>
   <Card
-    title="Reusable snippets"
-    icon="recycle"
-    href="/essentials/reusable-snippets"
+    title="VPC Endpoints"
+    icon="plug"
   >
-    Write once and reuse across your docs.
+    Enable private connectivity to S3 and DynamoDB without internet gateway traffic
   </Card>
-</Columns>
+  <Card
+    title="Comprehensive Tagging"
+    icon="tags"
+  >
+    Apply custom tags to all resources for organization, cost tracking, and governance
+  </Card>
+</CardGroup>
 
-## Need inspiration?
+## Quick Example
 
-<Card
-  title="See complete examples"
-  icon="stars"
-  href="https://mintlify.com/customers"
->
-  Browse our showcase of exceptional documentation sites.
-</Card>
+```hcl
+module "vpc" {
+  source = "github.com/Planview/tf_aws_vpc"
+
+  name = "production-vpc"
+  cidr = "10.0.0.0/16"
+  
+  azs             = ["us-west-2a", "us-west-2b", "us-west-2c"]
+  private_subnets = ["10.0.1.0/24", "10.0.2.0/24", "10.0.3.0/24"]
+  public_subnets  = ["10.0.101.0/24", "10.0.102.0/24", "10.0.103.0/24"]
+  
+  enable_nat_gateway = true
+  enable_dns_hostnames = true
+
+  tags = {
+    Terraform   = "true"
+    Environment = "production"
+  }
+}
+```
+
+## Getting Started
+
+<Steps>
+  <Step title="Review the architecture">
+    Understand the [networking architecture](/architecture/overview) and how the module creates VPCs, subnets, and routing tables.
+  </Step>
+  <Step title="Follow the quickstart">
+    Use the [quickstart guide](/quickstart) to deploy your first VPC with recommended settings.
+  </Step>
+  <Step title="Customize your configuration">
+    Explore [configuration options](/configuration/variables) to tailor the VPC to your specific requirements.
+  </Step>
+  <Step title="Review examples">
+    Check out [real-world examples](/examples/basic-vpc) for different deployment scenarios.
+  </Step>
+</Steps>

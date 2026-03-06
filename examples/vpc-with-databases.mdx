@@ -1,0 +1,417 @@
+---
+title: 'VPC with Database Subnets'
+description: 'Complete VPC setup with dedicated subnets for RDS databases and ElastiCache'
+---
+
+## Overview
+
+This example demonstrates a comprehensive VPC configuration with specialized subnet groups for databases and caching layers. It's ideal for production applications that use RDS, Aurora, ElastiCache, or other managed database services.
+
+<Note>
+  Database and ElastiCache subnets are created in private subnets (no direct internet access) and use the VPC's NAT Gateways for outbound connectivity when needed.
+</Note>
+
+## What Gets Created
+
+<Steps>
+  <Step title="VPC with multiple subnet tiers">
+    A VPC organized into four distinct subnet tiers: public, private (application), database, and cache layers.
+  </Step>
+  
+  <Step title="Public subnets for load balancers">
+    Public subnets across three AZs for Application Load Balancers, NAT Gateways, and bastion hosts.
+  </Step>
+  
+  <Step title="Private application subnets">
+    Private subnets for application servers and microservices with NAT Gateway access.
+  </Step>
+  
+  <Step title="Database subnet group">
+    Dedicated database subnets with an RDS subnet group for Multi-AZ database deployments.
+  </Step>
+  
+  <Step title="ElastiCache subnet group">
+    Separate ElastiCache subnets for Redis or Memcached clusters.
+  </Step>
+  
+  <Step title="VPC endpoints for AWS services">
+    S3 and DynamoDB VPC endpoints to reduce NAT Gateway costs and improve performance.
+  </Step>
+</Steps>
+
+## Complete Configuration
+
+```hcl
+module "vpc" {
+  source = "github.com/terraform-community-modules/tf_aws_vpc"
+
+  name = "app-vpc"
+  cidr = "10.0.0.0/16"
+
+  # Three availability zones for high availability
+  azs = ["us-east-1a", "us-east-1b", "us-east-1c"]
+
+  # Public subnets - load balancers, NAT gateways
+  public_subnets = [
+    "10.0.1.0/24",
+    "10.0.2.0/24",
+    "10.0.3.0/24"
+  ]
+
+  # Private subnets - application tier
+  private_subnets = [
+    "10.0.11.0/24",
+    "10.0.12.0/24",
+    "10.0.13.0/24"
+  ]
+
+  # Database subnets - RDS, Aurora
+  database_subnets = [
+    "10.0.21.0/24",
+    "10.0.22.0/24",
+    "10.0.23.0/24"
+  ]
+
+  # ElastiCache subnets - Redis, Memcached
+  elasticache_subnets = [
+    "10.0.31.0/24",
+    "10.0.32.0/24",
+    "10.0.33.0/24"
+  ]
+
+  # Create RDS subnet group automatically
+  create_database_subnet_group = true
+
+  # Enable DNS
+  enable_dns_hostnames = true
+  enable_dns_support   = true
+
+  # NAT Gateways - one per AZ for HA
+  enable_nat_gateway = true
+  single_nat_gateway = false
+
+  # VPC Endpoints - reduce NAT Gateway costs
+  enable_s3_endpoint       = true
+  enable_dynamodb_endpoint = true
+
+  # Don't auto-assign public IPs (more secure)
+  map_public_ip_on_launch = false
+
+  # Base tags for all resources
+  tags = {
+    Terraform   = "true"
+    Environment = "production"
+    Application = "web-app"
+    Owner       = "platform-team"
+  }
+
+  # Public subnet tags
+  public_subnet_tags = {
+    Tier = "public"
+    "kubernetes.io/role/elb" = "1"
+  }
+
+  # Private subnet tags
+  private_subnet_tags = {
+    Tier = "application"
+    "kubernetes.io/role/internal-elb" = "1"
+  }
+
+  # Database subnet tags
+  database_subnet_tags = {
+    Tier = "database"
+    Type = "rds"
+  }
+
+  # ElastiCache subnet tags
+  elasticache_subnet_tags = {
+    Tier = "cache"
+    Type = "elasticache"
+  }
+}
+
+# ========================================
+# Outputs
+# ========================================
+
+output "vpc_id" {
+  description = "The ID of the VPC"
+  value       = module.vpc.vpc_id
+}
+
+output "public_subnets" {
+  description = "List of IDs of public subnets"
+  value       = module.vpc.public_subnets
+}
+
+output "private_subnets" {
+  description = "List of IDs of private subnets for application tier"
+  value       = module.vpc.private_subnets
+}
+
+output "database_subnets" {
+  description = "List of IDs of database subnets"
+  value       = module.vpc.database_subnets
+}
+
+output "database_subnet_group" {
+  description = "Name of database subnet group for RDS"
+  value       = module.vpc.database_subnet_group
+}
+
+output "elasticache_subnets" {
+  description = "List of IDs of ElastiCache subnets"
+  value       = module.vpc.elasticache_subnets
+}
+
+output "elasticache_subnet_group" {
+  description = "Name of ElastiCache subnet group"
+  value       = module.vpc.elasticache_subnet_group
+}
+
+output "nat_public_ips" {
+  description = "Public IPs of NAT Gateways (whitelist these for external services)"
+  value       = module.vpc.nat_eips_public_ips
+}
+
+output "vpc_endpoint_s3_id" {
+  description = "The ID of the S3 VPC Endpoint"
+  value       = module.vpc.vpc_endpoint_s3_id
+}
+
+output "vpc_endpoint_dynamodb_id" {
+  description = "The ID of the DynamoDB VPC Endpoint"
+  value       = module.vpc.vpc_endpoint_dynamodb_id
+}
+```
+
+## Using the Database Subnets
+
+The module automatically creates subnet groups that can be directly referenced when creating database resources.
+
+### RDS Database Example
+
+```hcl
+resource "aws_db_instance" "main" {
+  identifier     = "production-db"
+  engine         = "postgres"
+  engine_version = "14.7"
+  instance_class = "db.t3.large"
+  
+  allocated_storage = 100
+  storage_encrypted = true
+  
+  # Use the subnet group created by the VPC module
+  db_subnet_group_name = module.vpc.database_subnet_group
+  
+  # Multi-AZ deployment for high availability
+  multi_az = true
+  
+  # Security
+  vpc_security_group_ids = [aws_security_group.database.id]
+  
+  # Backup configuration
+  backup_retention_period = 7
+  backup_window          = "03:00-04:00"
+  maintenance_window     = "mon:04:00-mon:05:00"
+  
+  # Database credentials (use AWS Secrets Manager in production)
+  username = "dbadmin"
+  password = var.db_password
+  
+  tags = {
+    Name        = "production-database"
+    Environment = "production"
+  }
+}
+
+# Security group for database
+resource "aws_security_group" "database" {
+  name        = "database-sg"
+  description = "Allow PostgreSQL access from application tier"
+  vpc_id      = module.vpc.vpc_id
+
+  ingress {
+    description     = "PostgreSQL from application tier"
+    from_port       = 5432
+    to_port         = 5432
+    protocol        = "tcp"
+    cidr_blocks     = ["10.0.11.0/24", "10.0.12.0/24", "10.0.13.0/24"]
+  }
+
+  egress {
+    description = "Allow all outbound"
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = {
+    Name = "database-security-group"
+  }
+}
+```
+
+### Aurora Cluster Example
+
+```hcl
+resource "aws_rds_cluster" "main" {
+  cluster_identifier     = "production-aurora-cluster"
+  engine                 = "aurora-postgresql"
+  engine_version         = "14.6"
+  database_name          = "appdb"
+  master_username        = "dbadmin"
+  master_password        = var.db_password
+  
+  # Use the database subnet group
+  db_subnet_group_name   = module.vpc.database_subnet_group
+  vpc_security_group_ids = [aws_security_group.database.id]
+  
+  # High availability
+  backup_retention_period = 14
+  preferred_backup_window = "03:00-04:00"
+  
+  # Enable encryption
+  storage_encrypted = true
+  
+  tags = {
+    Name        = "production-aurora"
+    Environment = "production"
+  }
+}
+
+resource "aws_rds_cluster_instance" "instances" {
+  count              = 3  # One per AZ
+  identifier         = "production-aurora-${count.index}"
+  cluster_identifier = aws_rds_cluster.main.id
+  instance_class     = "db.r6g.xlarge"
+  engine             = aws_rds_cluster.main.engine
+  engine_version     = aws_rds_cluster.main.engine_version
+}
+```
+
+### ElastiCache Redis Cluster Example
+
+```hcl
+resource "aws_elasticache_replication_group" "redis" {
+  replication_group_id       = "app-redis-cluster"
+  replication_group_description = "Redis cluster for session storage"
+  engine                     = "redis"
+  engine_version             = "7.0"
+  node_type                  = "cache.r6g.large"
+  
+  # Use the ElastiCache subnet group from VPC module
+  subnet_group_name = module.vpc.elasticache_subnet_group
+  security_group_ids = [aws_security_group.redis.id]
+  
+  # Multi-AZ with automatic failover
+  num_cache_clusters         = 3
+  automatic_failover_enabled = true
+  multi_az_enabled          = true
+  
+  # Backup configuration
+  snapshot_retention_limit = 5
+  snapshot_window         = "03:00-05:00"
+  
+  # Encryption
+  at_rest_encryption_enabled = true
+  transit_encryption_enabled = true
+  
+  tags = {
+    Name        = "app-redis"
+    Environment = "production"
+  }
+}
+
+# Security group for Redis
+resource "aws_security_group" "redis" {
+  name        = "redis-sg"
+  description = "Allow Redis access from application tier"
+  vpc_id      = module.vpc.vpc_id
+
+  ingress {
+    description = "Redis from application tier"
+    from_port   = 6379
+    to_port     = 6379
+    protocol    = "tcp"
+    cidr_blocks = ["10.0.11.0/24", "10.0.12.0/24", "10.0.13.0/24"]
+  }
+
+  tags = {
+    Name = "redis-security-group"
+  }
+}
+```
+
+## Network Architecture
+
+This VPC uses a four-tier subnet architecture:
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  VPC: 10.0.0.0/16                                          │
+├─────────────────────────────────────────────────────────────┤
+│  Public Subnets (10.0.1.0/24 - 10.0.3.0/24)               │
+│  - Application Load Balancers                               │
+│  - NAT Gateways                                             │
+│  - Bastion Hosts                                            │
+├─────────────────────────────────────────────────────────────┤
+│  Private Subnets (10.0.11.0/24 - 10.0.13.0/24)            │
+│  - Application Servers                                      │
+│  - API Services                                             │
+│  - Container/ECS Tasks                                      │
+├─────────────────────────────────────────────────────────────┤
+│  Database Subnets (10.0.21.0/24 - 10.0.23.0/24)           │
+│  - RDS Databases                                            │
+│  - Aurora Clusters                                          │
+├─────────────────────────────────────────────────────────────┤
+│  ElastiCache Subnets (10.0.31.0/24 - 10.0.33.0/24)        │
+│  - Redis Clusters                                           │
+│  - Memcached Clusters                                       │
+└─────────────────────────────────────────────────────────────┘
+```
+
+## Security Best Practices
+
+<Note>
+  Database and cache subnets should NEVER be directly accessible from the internet. Always access them through the application tier or via a bastion host/VPN.
+</Note>
+
+### Recommended Security Group Strategy
+
+1. **Application tier**: Accept traffic from load balancers only
+2. **Database tier**: Accept traffic from application tier only
+3. **Cache tier**: Accept traffic from application tier only
+4. **Use security group references** instead of CIDR blocks when possible:
+
+```hcl
+# Better: Reference security groups
+resource "aws_security_group_rule" "db_from_app" {
+  type                     = "ingress"
+  from_port                = 5432
+  to_port                  = 5432
+  protocol                 = "tcp"
+  source_security_group_id = aws_security_group.app.id
+  security_group_id        = aws_security_group.database.id
+}
+```
+
+## Cost Considerations
+
+Monthly VPC infrastructure costs:
+- **NAT Gateways**: 3 × $32 = $96/month
+- **Data Processing**: ~$0.045/GB
+- **VPC Endpoints**: Free for S3 and DynamoDB
+
+**Total Base Cost**: ~$96/month (database and cache costs are separate)
+
+## Additional Resources
+
+After creating your VPC with database subnets, consider:
+
+1. **VPC Flow Logs**: Monitor network traffic for troubleshooting and security
+2. **AWS Backup**: Centralized backup management for RDS and other resources  
+3. **Parameter Groups**: Customize database configurations
+4. **Option Groups**: Enable additional database features (RDS)
+5. **Secrets Manager**: Securely manage database credentials

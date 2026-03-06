@@ -1,0 +1,230 @@
+---
+title: 'Configuration Overview'
+description: 'Understand how to configure the AWS VPC Terraform module using input variables'
+---
+
+## Configuration Approach
+
+The AWS VPC Terraform module uses a declarative configuration model through input variables. All configuration is done by setting variable values when calling the module - there are no configuration files to manage.
+
+### Core Configuration Pattern
+
+The module follows these configuration principles:
+
+1. **Sensible Defaults** - Most variables have default values, allowing minimal configuration for simple use cases
+2. **Explicit Enablement** - Advanced features (NAT gateways, VPC endpoints) are disabled by default and must be explicitly enabled
+3. **List-Based Subnet Definition** - Subnets are defined as lists of CIDR blocks paired with availability zones
+4. **Hierarchical Tagging** - Global tags apply to all resources, with subnet-specific tags for granular control
+
+## Essential Variables
+
+<ParamField path="name" type="string" required>
+  Name to be used on all resources as identifier. This becomes part of resource names (e.g., `{name}-vpc`, `{name}-subnet-public-us-east-1a`).
+  
+  **Default:** `""`
+</ParamField>
+
+<ParamField path="cidr" type="string" required>
+  The CIDR block for the VPC. Must be a valid IPv4 CIDR block.
+  
+  **Default:** `""`
+  
+  **Example:** `"10.0.0.0/16"`
+</ParamField>
+
+<ParamField path="azs" type="list(string)" required>
+  A list of availability zones in the region where subnets will be created. The module distributes subnets across these AZs.
+  
+  **Default:** `[]`
+  
+  **Example:** `["us-west-2a", "us-west-2b", "us-west-2c"]`
+</ParamField>
+
+<Warning>
+  Keep `public_subnets`, `private_subnets`, and `azs` lists the same length. Each subnet CIDR is paired with the corresponding AZ by index.
+</Warning>
+
+## Subnet Configuration Variables
+
+<ParamField path="public_subnets" type="list(string)">
+  A list of public subnet CIDR blocks inside the VPC. These subnets will have routes to an Internet Gateway.
+  
+  **Default:** `[]`
+  
+  **Example:** `["10.0.101.0/24", "10.0.102.0/24", "10.0.103.0/24"]`
+</ParamField>
+
+<ParamField path="private_subnets" type="list(string)">
+  A list of private subnet CIDR blocks inside the VPC. These subnets can optionally route through NAT gateways.
+  
+  **Default:** `[]`
+  
+  **Example:** `["10.0.1.0/24", "10.0.2.0/24", "10.0.3.0/24"]`
+</ParamField>
+
+<ParamField path="database_subnets" type="list(string)">
+  A list of database subnet CIDR blocks. Automatically creates an RDS subnet group when specified.
+  
+  **Default:** `[]`
+  
+  **Example:** `["10.0.21.0/24", "10.0.22.0/24", "10.0.23.0/24"]`
+</ParamField>
+
+<ParamField path="elasticache_subnets" type="list(string)">
+  A list of ElastiCache subnet CIDR blocks. Automatically creates an ElastiCache subnet group when specified.
+  
+  **Default:** `[]`
+  
+  **Example:** `["10.0.31.0/24", "10.0.32.0/24", "10.0.33.0/24"]`
+</ParamField>
+
+## DNS Configuration
+
+<ParamField path="enable_dns_hostnames" type="bool">
+  Enable DNS hostnames in the VPC. Set to `true` if you want to use private DNS within the VPC.
+  
+  **Default:** `false`
+  
+  **Used in:** `main.tf:4`
+</ParamField>
+
+<ParamField path="enable_dns_support" type="bool">
+  Enable DNS resolution in the VPC. Set to `true` if you want to use private DNS within the VPC.
+  
+  **Default:** `false`
+  
+  **Used in:** `main.tf:5`
+</ParamField>
+
+<Note>
+  For most production VPCs, you should enable both `enable_dns_hostnames` and `enable_dns_support` to allow EC2 instances to resolve private DNS names.
+</Note>
+
+## Instance Configuration
+
+<ParamField path="instance_tenancy" type="string">
+  A tenancy option for instances launched into the VPC. Valid values: `default`, `dedicated`.
+  
+  **Default:** `"default"`
+  
+  **Used in:** `main.tf:3`
+</ParamField>
+
+<ParamField path="map_public_ip_on_launch" type="bool">
+  Automatically assign public IP addresses to instances launched in public subnets. Set to `false` if you don't want auto-assignment.
+  
+  **Default:** `true`
+  
+  **Used in:** `main.tf:106`
+</ParamField>
+
+## Routing Configuration
+
+<ParamField path="private_propagating_vgws" type="list(string)">
+  A list of Virtual Private Gateway (VGW) IDs that the private route tables should propagate routes from.
+  
+  **Default:** `[]`
+  
+  **Used in:** `main.tf:47`
+</ParamField>
+
+<ParamField path="public_propagating_vgws" type="list(string)">
+  A list of Virtual Private Gateway (VGW) IDs that the public route table should propagate routes from.
+  
+  **Default:** `[]`
+  
+  **Used in:** `main.tf:22`
+</ParamField>
+
+## Minimal Configuration Example
+
+```hcl
+module "vpc" {
+  source = "github.com/terraform-community-modules/tf_aws_vpc"
+
+  name = "my-vpc"
+  cidr = "10.0.0.0/16"
+  
+  azs             = ["us-west-2a", "us-west-2b", "us-west-2c"]
+  private_subnets = ["10.0.1.0/24", "10.0.2.0/24", "10.0.3.0/24"]
+  public_subnets  = ["10.0.101.0/24", "10.0.102.0/24", "10.0.103.0/24"]
+  
+  enable_dns_hostnames = true
+  enable_dns_support   = true
+}
+```
+
+## Complete Configuration Example
+
+```hcl
+module "vpc" {
+  source = "github.com/terraform-community-modules/tf_aws_vpc"
+
+  name = "production-vpc"
+  cidr = "10.0.0.0/16"
+  
+  # Availability zones
+  azs = ["us-west-2a", "us-west-2b", "us-west-2c"]
+  
+  # Subnet configuration
+  private_subnets     = ["10.0.1.0/24", "10.0.2.0/24", "10.0.3.0/24"]
+  public_subnets      = ["10.0.101.0/24", "10.0.102.0/24", "10.0.103.0/24"]
+  database_subnets    = ["10.0.21.0/24", "10.0.22.0/24", "10.0.23.0/24"]
+  elasticache_subnets = ["10.0.31.0/24", "10.0.32.0/24", "10.0.33.0/24"]
+  
+  # Database subnet group
+  create_database_subnet_group = true
+  
+  # NAT Gateway configuration
+  enable_nat_gateway = true
+  single_nat_gateway = false
+  
+  # VPC Endpoints
+  enable_s3_endpoint       = true
+  enable_dynamodb_endpoint = true
+  
+  # DNS
+  enable_dns_hostnames = true
+  enable_dns_support   = true
+  
+  # Instance settings
+  map_public_ip_on_launch = true
+  
+  # Tags
+  tags = {
+    Terraform   = "true"
+    Environment = "production"
+  }
+}
+```
+
+## Configuration Validation
+
+<Warning>
+  **Common Configuration Mistakes:**
+  
+  - Mismatched list lengths between subnets and availability zones
+  - Overlapping CIDR blocks between subnet types
+  - Forgetting to enable NAT gateways for private subnet internet access
+  - Not enabling DNS support for services that require it (like RDS)
+</Warning>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Subnet Types" icon="network-wired" href="/configuration/subnet-types">
+    Learn how to configure different subnet types
+  </Card>
+  
+  <Card title="NAT Gateways" icon="router" href="/configuration/nat-gateways">
+    Configure NAT gateways for private subnet internet access
+  </Card>
+  
+  <Card title="VPC Endpoints" icon="plug" href="/configuration/vpc-endpoints">
+    Set up VPC endpoints for S3 and DynamoDB
+  </Card>
+  
+  <Card title="Tagging" icon="tags" href="/configuration/tagging">
+    Implement tagging strategies for your VPC resources
+  </Card>
+</CardGroup>

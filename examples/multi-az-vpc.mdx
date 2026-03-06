@@ -1,0 +1,258 @@
+---
+title: 'Multi-AZ Production VPC'
+description: 'Highly available VPC with NAT Gateways in each AZ for production workloads'
+---
+
+## Overview
+
+This example demonstrates a production-ready VPC configuration with high availability across three availability zones. Each AZ has its own NAT Gateway to eliminate single points of failure.
+
+<Note>
+  This configuration provides high availability but costs more due to multiple NAT Gateways. Each NAT Gateway costs approximately $32/month plus data processing fees.
+</Note>
+
+## What Gets Created
+
+<Steps>
+  <Step title="VPC spanning 3 availability zones">
+    A highly available VPC with CIDR block `10.0.0.0/16` distributed across three AZs in the region.
+  </Step>
+  
+  <Step title="Public subnets in each AZ">
+    Three public subnets with Internet Gateway access for load balancers, bastion hosts, and NAT Gateways.
+  </Step>
+  
+  <Step title="Private subnets in each AZ">
+    Three private subnets for application servers, with each subnet routing through its own NAT Gateway for redundancy.
+  </Step>
+  
+  <Step title="NAT Gateway per AZ">
+    Three NAT Gateways (one per AZ) to ensure private subnets maintain internet access even if an AZ fails.
+  </Step>
+  
+  <Step title="Comprehensive tagging">
+    Production-grade tags for cost allocation, environment identification, and resource management.
+  </Step>
+</Steps>
+
+## Complete Configuration
+
+```hcl
+module "vpc" {
+  source = "github.com/terraform-community-modules/tf_aws_vpc"
+
+  name = "production-vpc"
+  cidr = "10.0.0.0/16"
+
+  # Distribute across three availability zones for high availability
+  azs = ["us-west-2a", "us-west-2b", "us-west-2c"]
+
+  # Public subnets - for load balancers, NAT gateways, bastion hosts
+  public_subnets = [
+    "10.0.1.0/24",   # us-west-2a
+    "10.0.2.0/24",   # us-west-2b
+    "10.0.3.0/24"    # us-west-2c
+  ]
+
+  # Private subnets - for application servers, internal services
+  private_subnets = [
+    "10.0.101.0/24", # us-west-2a
+    "10.0.102.0/24", # us-west-2b
+    "10.0.103.0/24"  # us-west-2c
+  ]
+
+  # Enable DNS support for service discovery
+  enable_dns_hostnames = true
+  enable_dns_support   = true
+
+  # NAT Gateways - one per AZ for high availability
+  enable_nat_gateway = true
+  single_nat_gateway = false  # This creates one NAT Gateway per AZ
+
+  # Auto-assign public IPs in public subnets
+  map_public_ip_on_launch = true
+
+  # VPC Endpoints to reduce NAT Gateway data transfer costs
+  enable_s3_endpoint       = true
+  enable_dynamodb_endpoint = true
+
+  # Common tags applied to all resources
+  tags = {
+    Terraform   = "true"
+    Environment = "production"
+    Project     = "core-infrastructure"
+    ManagedBy   = "platform-team"
+    CostCenter  = "engineering"
+  }
+
+  # Specific tags for subnet types
+  public_subnet_tags = {
+    Tier = "public"
+    Type = "dmz"
+  }
+
+  private_subnet_tags = {
+    Tier                              = "private"
+    Type                              = "application"
+    "kubernetes.io/role/internal-elb" = "1"  # Example: EKS internal load balancers
+  }
+}
+
+# Outputs for use in other Terraform configurations
+output "vpc_id" {
+  description = "The ID of the VPC"
+  value       = module.vpc.vpc_id
+}
+
+output "vpc_cidr" {
+  description = "The CIDR block of the VPC"
+  value       = "10.0.0.0/16"
+}
+
+output "public_subnets" {
+  description = "List of IDs of public subnets"
+  value       = module.vpc.public_subnets
+}
+
+output "private_subnets" {
+  description = "List of IDs of private subnets"
+  value       = module.vpc.private_subnets
+}
+
+output "public_route_table_ids" {
+  description = "List of IDs of public route tables"
+  value       = module.vpc.public_route_table_ids
+}
+
+output "private_route_table_ids" {
+  description = "List of IDs of private route tables"
+  value       = module.vpc.private_route_table_ids
+}
+
+output "nat_gateway_ids" {
+  description = "List of NAT Gateway IDs"
+  value       = module.vpc.natgw_ids
+}
+
+output "nat_public_ips" {
+  description = "List of public Elastic IPs created for NAT Gateways"
+  value       = module.vpc.nat_eips_public_ips
+}
+
+output "internet_gateway_id" {
+  description = "The ID of the Internet Gateway"
+  value       = module.vpc.igw_id
+}
+
+output "s3_endpoint_id" {
+  description = "The ID of the S3 VPC Endpoint"
+  value       = module.vpc.vpc_endpoint_s3_id
+}
+
+output "dynamodb_endpoint_id" {
+  description = "The ID of the DynamoDB VPC Endpoint"
+  value       = module.vpc.vpc_endpoint_dynamodb_id
+}
+```
+
+## Key Configuration Choices
+
+### Multiple NAT Gateways for High Availability
+
+By setting `single_nat_gateway = false`, the module creates one NAT Gateway in each availability zone. This ensures that if one AZ experiences an outage, private subnets in other AZs maintain internet connectivity through their own NAT Gateways.
+
+**Cost vs. Availability Trade-off:**
+- 3 NAT Gateways = ~$96/month (vs ~$32/month for single NAT Gateway)
+- Provides true multi-AZ redundancy
+- Recommended for production workloads
+
+### VPC Endpoints for Cost Optimization
+
+Enabling S3 and DynamoDB VPC endpoints allows resources in private subnets to access these services without routing through NAT Gateways, significantly reducing data transfer costs:
+
+```hcl
+enable_s3_endpoint       = true  # Free, reduces NAT Gateway data costs
+enable_dynamodb_endpoint = true  # Free, reduces NAT Gateway data costs
+```
+
+### Subnet Tagging Strategy
+
+The configuration includes specific tags for different subnet types. This is particularly useful for:
+- **Cost allocation**: Track spending by tier or type
+- **Kubernetes/EKS**: Auto-discovery of subnets for load balancers
+- **Automation**: Programmatically identify subnets by purpose
+
+## Production Use Cases
+
+This VPC configuration is ideal for:
+
+### High-Availability Web Applications
+
+```hcl
+# Application Load Balancer in public subnets
+resource "aws_lb" "app" {
+  name               = "app-alb"
+  internal           = false
+  load_balancer_type = "application"
+  subnets            = module.vpc.public_subnets
+  
+  tags = {
+    Environment = "production"
+  }
+}
+
+# Auto Scaling Group across all private subnets
+resource "aws_autoscaling_group" "app" {
+  name                = "app-asg"
+  vpc_zone_identifier = module.vpc.private_subnets
+  min_size            = 3
+  max_size            = 9
+  desired_capacity    = 3
+  
+  # Ensures instances are distributed across all AZs
+  target_group_arns = [aws_lb_target_group.app.arn]
+}
+```
+
+### EKS Cluster Deployment
+
+```hcl
+resource "aws_eks_cluster" "main" {
+  name     = "production-cluster"
+  role_arn = aws_iam_role.eks_cluster.arn
+
+  vpc_config {
+    subnet_ids = concat(
+      module.vpc.private_subnets,
+      module.vpc.public_subnets
+    )
+    endpoint_private_access = true
+    endpoint_public_access  = true
+  }
+}
+```
+
+## Cost Estimation
+
+Monthly costs for this VPC configuration:
+
+- **NAT Gateways**: 3 × $32 = $96/month
+- **Elastic IPs**: 3 × $0 = $0 (free when attached to NAT Gateways)
+- **Data Processing**: Variable, ~$0.045/GB processed
+- **VPC Endpoints**: Free for S3 and DynamoDB
+
+**Total Base Cost**: ~$96/month + data transfer costs
+
+## Security Considerations
+
+<Note>
+  Remember to add security group rules and NACLs as needed. The VPC module creates the network infrastructure, but you're responsible for securing it with appropriate firewall rules.
+</Note>
+
+### Recommended Next Steps
+
+1. **Create security groups** for different application tiers
+2. **Configure NACLs** for additional subnet-level security
+3. **Enable VPC Flow Logs** for traffic monitoring and troubleshooting
+4. **Set up AWS Config** rules to ensure compliance
+5. **Implement least privilege** IAM policies for resource access

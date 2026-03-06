@@ -1,0 +1,144 @@
+---
+title: Introduction
+description: Overview of the AWS VPC Terraform Module for creating production-ready VPC infrastructure
+---
+
+The AWS VPC Terraform Module provides a battle-tested, community-maintained solution for creating production-grade Virtual Private Clouds (VPCs) on Amazon Web Services. This module abstracts the complexity of VPC configuration while maintaining flexibility for various deployment scenarios.
+
+## What This Module Does
+
+This module creates a complete VPC infrastructure with:
+
+<CardGroup cols={2}>
+  <Card title="Network Architecture" icon="network-wired">
+    Multi-tier subnet design across availability zones with public, private, database, and ElastiCache subnets
+  </Card>
+  <Card title="Internet Connectivity" icon="globe">
+    Internet Gateway for public subnets and configurable NAT Gateways for private subnet egress
+  </Card>
+  <Card title="AWS Service Access" icon="aws">
+    VPC Endpoints for cost-effective, secure access to S3 and DynamoDB without internet routing
+  </Card>
+  <Card title="High Availability" icon="server">
+    Automated distribution across availability zones with per-AZ routing and optional shared NAT
+  </Card>
+</CardGroup>
+
+## Key Features
+
+### Multi-AZ Subnet Architecture
+
+The module automatically distributes subnets across specified availability zones, creating a resilient network foundation:
+
+- **Public Subnets**: Internet-facing resources with Internet Gateway routing
+- **Private Subnets**: Backend services with NAT Gateway egress
+- **Database Subnets**: Isolated RDS instances with automatic subnet group creation
+- **ElastiCache Subnets**: Dedicated cache layer subnets with subnet group management
+
+### Flexible NAT Gateway Deployment
+
+Choose the NAT Gateway strategy that fits your requirements:
+
+<CodeGroup>
+```hcl High Availability (Per-AZ)
+module "vpc" {
+  enable_nat_gateway = true
+  single_nat_gateway = false  # One NAT per AZ
+}
+```
+
+```hcl Cost-Optimized (Shared)
+module "vpc" {
+  enable_nat_gateway = true
+  single_nat_gateway = true   # Single shared NAT
+}
+```
+</CodeGroup>
+
+<Note>
+**High Availability Mode**: Deploys one NAT Gateway per availability zone for redundancy and higher bandwidth.
+
+**Cost-Optimized Mode**: Uses a single NAT Gateway shared across all private subnets to minimize costs.
+</Note>
+
+### VPC Endpoints for AWS Services
+
+Reduce data transfer costs and improve security by accessing AWS services directly from your VPC:
+
+- **S3 Endpoint**: Gateway endpoint for S3 access without internet routing
+- **DynamoDB Endpoint**: Gateway endpoint for DynamoDB with no data transfer charges
+
+Both endpoints are automatically associated with public and private route tables when enabled.
+
+### Comprehensive Tagging Support
+
+Apply consistent tagging across all resources:
+
+```hcl
+module "vpc" {
+  tags = {
+    Environment = "production"
+    ManagedBy   = "terraform"
+    CostCenter  = "engineering"
+  }
+  
+  # Subnet-specific tags
+  public_subnet_tags = {
+    Tier = "public"
+  }
+  
+  private_subnet_tags = {
+    Tier = "private"
+  }
+}
+```
+
+## Use Cases
+
+This module is ideal for:
+
+- **Multi-tier web applications** requiring public, private, and data layer separation
+- **Microservices architectures** needing isolated network segments
+- **Database deployments** with RDS or ElastiCache requiring dedicated subnet groups
+- **Production workloads** demanding high availability across multiple AZs
+- **Cost-sensitive environments** that can benefit from shared NAT or VPC endpoints
+
+## Architecture Overview
+
+The module creates the following network topology:
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                          VPC (CIDR)                          │
+├─────────────────────────────────────────────────────────────┤
+│                                                               │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐      │
+│  │   AZ-A       │  │   AZ-B       │  │   AZ-C       │      │
+│  ├──────────────┤  ├──────────────┤  ├──────────────┤      │
+│  │ Public       │  │ Public       │  │ Public       │ ←IGW │
+│  ├──────────────┤  ├──────────────┤  ├──────────────┤      │
+│  │ Private      │  │ Private      │  │ Private      │ ←NAT │
+│  ├──────────────┤  ├──────────────┤  ├──────────────┤      │
+│  │ Database     │  │ Database     │  │ Database     │      │
+│  ├──────────────┤  ├──────────────┤  ├──────────────┤      │
+│  │ ElastiCache  │  │ ElastiCache  │  │ ElastiCache  │      │
+│  └──────────────┘  └──────────────┘  └──────────────┘      │
+│                                                               │
+│  VPC Endpoints: S3, DynamoDB                                 │
+└─────────────────────────────────────────────────────────────┘
+```
+
+<Warning>
+This module creates resources that incur AWS charges, including NAT Gateways (approximately $0.045/hour per gateway) and data transfer costs. Review your architecture requirements carefully.
+</Warning>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Quick Start" icon="rocket" href="/quickstart">
+    Deploy your first VPC in minutes with step-by-step instructions
+  </Card>
+  <Card title="Configuration Reference" icon="book" href="/configuration">
+    Explore all available variables and customization options
+  </Card>
+</CardGroup>

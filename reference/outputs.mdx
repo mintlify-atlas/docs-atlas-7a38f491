@@ -1,0 +1,158 @@
+---
+title: Output Values
+description: Complete reference of all output values from the AWS VPC Terraform Module
+---
+
+This page documents all output values that the VPC module exposes after creating the infrastructure.
+
+## VPC Outputs
+
+<ResponseField name="vpc_id" type="string">
+  The ID of the VPC.
+  
+  **Example:** `vpc-0123456789abcdef0`
+</ResponseField>
+
+<ResponseField name="vpc_cidr_block" type="string">
+  The CIDR block of the VPC.
+  
+  **Example:** `10.0.0.0/16`
+</ResponseField>
+
+<ResponseField name="default_security_group_id" type="string">
+  The ID of the default security group created by AWS for the VPC.
+  
+  **Example:** `sg-0123456789abcdef0`
+</ResponseField>
+
+<ResponseField name="default_network_acl_id" type="string">
+  The ID of the default network ACL created by AWS for the VPC.
+  
+  **Example:** `acl-0123456789abcdef0`
+</ResponseField>
+
+## Subnet Outputs
+
+<ResponseField name="public_subnets" type="list">
+  List of IDs of public subnets.
+  
+  **Example:** `["subnet-abc123", "subnet-def456", "subnet-ghi789"]`
+</ResponseField>
+
+<ResponseField name="private_subnets" type="list">
+  List of IDs of private subnets.
+  
+  **Example:** `["subnet-abc123", "subnet-def456", "subnet-ghi789"]`
+</ResponseField>
+
+<ResponseField name="database_subnets" type="list">
+  List of IDs of database subnets.
+  
+  **Example:** `["subnet-abc123", "subnet-def456", "subnet-ghi789"]`
+</ResponseField>
+
+<ResponseField name="elasticache_subnets" type="list">
+  List of IDs of elasticache subnets.
+  
+  **Example:** `["subnet-abc123", "subnet-def456", "subnet-ghi789"]`
+</ResponseField>
+
+## Subnet Group Outputs
+
+<ResponseField name="database_subnet_group" type="string">
+  The name/ID of the RDS database subnet group. Only created if `create_database_subnet_group` is true and `database_subnets` are provided.
+  
+  **Example:** `my-vpc-rds-subnet-group`
+</ResponseField>
+
+<ResponseField name="elasticache_subnet_group" type="string">
+  The name/ID of the ElastiCache subnet group. Only created if `elasticache_subnets` are provided.
+  
+  **Example:** `my-vpc-elasticache-subnet-group`
+</ResponseField>
+
+## Route Table Outputs
+
+<ResponseField name="public_route_table_ids" type="list">
+  List of IDs of public route tables.
+  
+  **Example:** `["rtb-0123456789abcdef0"]`
+</ResponseField>
+
+<ResponseField name="private_route_table_ids" type="list">
+  List of IDs of private route tables. One route table is created per availability zone.
+  
+  **Example:** `["rtb-abc123", "rtb-def456", "rtb-ghi789"]`
+</ResponseField>
+
+## Internet Gateway Outputs
+
+<ResponseField name="igw_id" type="string">
+  The ID of the Internet Gateway. Only created if `public_subnets` are provided.
+  
+  **Example:** `igw-0123456789abcdef0`
+</ResponseField>
+
+## NAT Gateway Outputs
+
+<ResponseField name="natgw_ids" type="list">
+  List of NAT Gateway IDs. Only created if `enable_nat_gateway` is true. The number of NAT Gateways depends on the `single_nat_gateway` setting:
+  - If `single_nat_gateway` is true: one NAT Gateway
+  - If `single_nat_gateway` is false: one NAT Gateway per availability zone
+  
+  **Example:** `["nat-abc123", "nat-def456", "nat-ghi789"]`
+</ResponseField>
+
+<ResponseField name="nat_eips" type="list">
+  List of Elastic IP allocation IDs for NAT Gateways. Only created if `enable_nat_gateway` is true.
+  
+  **Example:** `["eipalloc-abc123", "eipalloc-def456", "eipalloc-ghi789"]`
+</ResponseField>
+
+<ResponseField name="nat_eips_public_ips" type="list">
+  List of public IP addresses of Elastic IPs for NAT Gateways. Only created if `enable_nat_gateway` is true.
+  
+  **Example:** `["54.123.45.67", "54.123.45.68", "54.123.45.69"]`
+</ResponseField>
+
+## VPC Endpoint Outputs
+
+<ResponseField name="vpc_endpoint_s3_id" type="string">
+  The ID of the VPC endpoint for S3. Only created if `enable_s3_endpoint` is true.
+  
+  **Example:** `vpce-0123456789abcdef0`
+</ResponseField>
+
+<ResponseField name="vpc_endpoint_dynamodb_id" type="string">
+  The ID of the VPC endpoint for DynamoDB. Only created if `enable_dynamodb_endpoint` is true.
+  
+  **Example:** `vpce-0123456789abcdef0`
+</ResponseField>
+
+## Usage Example
+
+To reference these outputs in your Terraform configuration:
+
+```hcl
+module "vpc" {
+  source = "terraform-aws-modules/vpc/aws"
+  
+  name = "my-vpc"
+  cidr = "10.0.0.0/16"
+  
+  azs             = ["us-east-1a", "us-east-1b", "us-east-1c"]
+  private_subnets = ["10.0.1.0/24", "10.0.2.0/24", "10.0.3.0/24"]
+  public_subnets  = ["10.0.101.0/24", "10.0.102.0/24", "10.0.103.0/24"]
+  
+  enable_nat_gateway = true
+}
+
+# Reference outputs
+output "vpc_id" {
+  value = module.vpc.vpc_id
+}
+
+output "private_subnet_ids" {
+  value = module.vpc.private_subnets
+}
+```
